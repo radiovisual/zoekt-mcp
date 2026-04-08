@@ -28,14 +28,30 @@ Claude Code / Desktop / Cursor  ──stdio──▶  zoekt-mcp (Python)  ──
 
 - **Docker** — runs the zoekt-webserver backend and the one-shot
   indexer. Any recent Docker Desktop or engine with Compose v2 works.
-- **[uv](https://docs.astral.sh/uv/)** — used by your MCP client to
-  spawn the Python server on demand. Install it once per machine
-  via the [official installer](https://docs.astral.sh/uv/getting-started/installation/),
-  Homebrew (`brew install uv`), or `pipx install uv`.
+- **[uv](https://docs.astral.sh/uv/)** must be installed and on your
+  `PATH`. MCP clients spawn the Python server via `uvx`, so `which uv`
+  needs to resolve in whatever shell your client launches processes in.
+  Install it once per machine — any of these works:
+
+  ```bash
+  # Official installer (macOS / Linux)
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
+  # Homebrew
+  brew install uv
+
+  # pipx (if you already use it)
+  pipx install uv
+  ```
+
+  The installer drops `uv` and `uvx` into `~/.local/bin/` (Linux/macOS)
+  or `%USERPROFILE%\.local\bin\` (Windows). Make sure that directory is
+  on your `PATH`; on Ubuntu it usually is by default. Verify with
+  `uv --version`.
 
 You do **not** need to create a venv or `pip install` anything to
-*use* zoekt-mcp. `uv` handles that transparently on first invocation.
-A venv is only needed if you want to hack on the server itself — see
+*use* zoekt-mcp — `uvx` handles that transparently on first invocation.
+A venv is only needed if you want to hack on the server itself; see
 [Development setup](#development-setup) below.
 
 ### 1. Clone and bring up the backend
@@ -170,47 +186,39 @@ Under **Tools → list_repos**, an empty filter should return both
 ## Development setup
 
 If you want to hack on the server itself (rather than just use it via
-`uvx`), set up a local venv with `uv` bootstrapped inside it. This
-keeps `uv` scoped to the project — nothing gets installed globally.
+`uvx`), clone the repo and let `uv` manage the venv for you:
 
 ```bash
-# 1. Create a venv using the system Python
-python3 -m venv .venv
-
-# 2. Bootstrap uv into the venv (one-time, chicken-and-egg step)
-.venv/bin/pip install uv
-
-# 3. Let uv take over from here — installs all runtime + dev deps
-.venv/bin/uv sync
+git clone https://github.com/wuergler/zoekt-mcp
+cd zoekt-mcp
+uv sync
 ```
 
-After this, every dev command goes through `.venv/bin/uv`:
+`uv sync` creates `.venv/`, resolves everything against `uv.lock`, and
+installs all runtime + dev dependencies. The dev group (`pytest`,
+`pytest-asyncio`, `respx`) is installed by default; pass
+`uv sync --no-dev` for a runtime-only install.
+
+Common dev commands:
 
 ```bash
-.venv/bin/uv run pytest              # run the full test suite
-.venv/bin/uv run zoekt-mcp --help    # run the CLI from source
-.venv/bin/uv add <package>           # add a new runtime dep
-.venv/bin/uv lock --upgrade          # refresh uv.lock
+uv run pytest                    # run the full test suite
+uv run zoekt-mcp --help          # run the CLI from source
+uv add <package>                 # add a new runtime dep
+uv add --dev <package>           # add a new dev dep
+uv lock --upgrade                # refresh uv.lock
 ```
-
-If you activate the venv (`source .venv/bin/activate`), you can drop
-the `.venv/bin/` prefix and just call `uv ...` directly.
-
-Dev dependencies (`pytest`, `pytest-asyncio`, `respx`) live in the
-`dev` group in [`pyproject.toml`](pyproject.toml) and are installed
-by default on `uv sync`. Runtime-only installs can use
-`uv sync --no-dev`.
 
 ## Automated tests
 
 ```bash
 # Unit tests (no Docker required)
-.venv/bin/uv run pytest tests/test_client_unit.py tests/test_server_shaping.py -v
+uv run pytest tests/test_client_unit.py tests/test_server_shaping.py -v
 
 # Integration tests: bring the stack up against the examples/ corpus,
 # then run the live assertions.
 ./tests/fixtures/up.sh
-.venv/bin/uv run pytest tests/test_integration.py -v
+uv run pytest tests/test_integration.py -v
 ./tests/fixtures/down.sh
 ```
 
@@ -218,8 +226,7 @@ by default on `uv sync`. Runtime-only installs can use
 the same `deploy/docker-compose.yml`, so the test fixtures don't leak
 into the production deploy path. The integration tests skip
 automatically when `ZOEKT_URL` is unreachable, so a plain
-`.venv/bin/uv run pytest` in a fresh checkout without Docker still
-passes.
+`uv run pytest` in a fresh checkout without Docker still passes.
 
 ## Configuration
 
