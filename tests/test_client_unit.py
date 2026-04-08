@@ -96,28 +96,26 @@ async def test_search_raises_on_invalid_json(client: ZoektClient) -> None:
 
 
 @respx.mock
-async def test_get_file_extracts_pre_block(client: ZoektClient) -> None:
-    html_body = """
-    <html><body>
-      <h1>Source</h1>
-      <pre id="src"><a>1</a>def <b>hello</b>():
-<a>2</a>    return &quot;world&quot;
-</pre>
-    </body></html>
-    """
-    respx.get(PRINT_URL).mock(return_value=httpx.Response(200, text=html_body))
+async def test_get_file_returns_raw_text(client: ZoektClient) -> None:
+    raw_source = 'def hello():\n    return "world"\n'
+    route = respx.get(PRINT_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text=raw_source,
+            headers={"content-type": "text/plain; charset=utf-8"},
+        )
+    )
 
-    content = await client.get_file("flask-app", "app.py")
+    content = await client.get_file("flask-app", "app.py", branch="main")
 
-    assert content == '1def hello():\n2    return "world"\n'
-
-
-@respx.mock
-async def test_get_file_raises_when_no_pre_block(client: ZoektClient) -> None:
-    respx.get(PRINT_URL).mock(return_value=httpx.Response(200, text="<html>no pre</html>"))
-
-    with pytest.raises(ZoektBackendError, match="did not contain a <pre> block"):
-        await client.get_file("flask-app", "missing.py")
+    assert content == raw_source
+    assert route.called
+    sent = route.calls.last.request
+    # The client must request ?format=raw, otherwise zoekt returns HTML.
+    assert "format=raw" in str(sent.url)
+    assert "r=flask-app" in str(sent.url)
+    assert "f=app.py" in str(sent.url)
+    assert "b=main" in str(sent.url)
 
 
 @respx.mock

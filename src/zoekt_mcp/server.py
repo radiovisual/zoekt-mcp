@@ -11,6 +11,7 @@ Exposes :func:`build_server`, a factory that returns a configured
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -126,90 +127,148 @@ def _register_tools(mcp: FastMCP, client: ZoektClient) -> None:
 # Response shaping helpers
 # ---------------------------------------------------------------------- #
 #
-# zoekt's JSON responses are verbose and use multiple casings across
-# versions (``FileName`` vs ``fileName``, ``Repository`` vs ``repo``). We
-# trim responses down to the fields an agent actually cares about and
-# handle both casings via :func:`_pick`.
-
-
-def _pick(obj: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    """Return the first value found under any of ``keys`` in ``obj``."""
-    for key in keys:
-        if key in obj and obj[key] is not None:
-            return obj[key]
-    return default
+# zoekt's JSON responses are verbose. We trim them down to the fields
+# an agent actually cares about. Shapes below match the real output
+# from `zoekt-webserver -rpc` (tested against sourcegraph/zoekt-webserver
+# image, index format v16):
+#
+#   /api/search → {"Result": {FileCount, MatchCount, Duration, Files:
+#                    [{FileName, Repository, Language, Branches, Score,
+#                      ChunkMatches or LineMatches: [...]}]}}
+#
+#     - ChunkMatches (what you get when Opts.ChunkMatches=true, which
+#       is the client default) contain multi-line context blocks:
+#         {Content (base64), ContentStart {LineNumber, Column},
+#          Ranges: [{Start, End}], SymbolInfo: [{Sym, Kind, ...}],
+#          BestLineMatch, Score}
+#
+#     - LineMatches (the legacy format) are single lines:
+#         {LineNumber, Line (base64), LineStart, LineEnd,
+#          LineFragments: [{LineOffset, MatchLength, SymbolInfo}]}
+#
+#   /api/list   → {"List": {Repos: [{Repository: {Name, URL, Source,
+#                    Branches: [{Name, Version}]}, IndexMetadata:
+#                    {IndexTime, ...}, Stats: {...}}], Stats: {...}}}
 
 
 def _shape_search_result(query: str, raw: dict[str, Any]) -> dict[str, Any]:
-    stats = raw.get("Stats") or raw.get("stats") or {}
-    files_raw = raw.get("Files") or raw.get("files") or []
+    files_raw = raw.get("Files") or []
 
     files: list[dict[str, Any]] = []
     for f in files_raw:
         files.append(
             {
-                "repo": _pick(f, "Repository", "Repo", "repo", default=""),
-                "file": _pick(f, "FileName", "fileName", default=""),
-                "language": _pick(f, "Language", "language", default=""),
-                "branches": _pick(f, "Branches", "branches", default=[]) or [],
-                "score": _pick(f, "Score", "score"),
-                "matches": [_shape_match(m) for m in _iter_matches(f)],
+                "repo": f.get("Repository", ""),
+                "file": f.get("FileName", ""),
+                "language": f.get("Language", ""),
+                "branches": f.get("Branches") or [],
+                "score": f.get("Score"),
+                "matches": _shape_file_matches(f),
             }
         )
 
     return {
         "query": query,
-        "file_count": _pick(stats, "FileCount", "fileCount"),
-        "match_count": _pick(stats, "MatchCount", "matchCount"),
-        "duration_ms": _pick(stats, "Duration", "duration"),
+        "file_count": raw.get("FileCount"),
+        "match_count": raw.get("MatchCount"),
+        # zoekt reports Duration in nanoseconds.
+        "duration_ns": raw.get("Duration"),
         "files": files,
     }
 
 
-def _iter_matches(file_entry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Pull a file's match list regardless of whether zoekt used line- or
-    chunk-match mode.
+def _shape_file_matches(file_entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pick whichever match format the response uses and shape it.
+
+    Prefers ``ChunkMatches`` (richer, multi-line context) and falls
+    back to ``LineMatches`` (one line each) when only the legacy
+    format is present.
     """
-    for key in ("LineMatches", "lineMatches", "ChunkMatches", "chunkMatches", "Matches", "matches"):
-        matches = file_entry.get(key)
-        if matches:
-            return matches
-    return []
+    chunk_matches = file_entry.get("ChunkMatches") or []
+    if chunk_matches:
+        return [_shape_chunk_match(cm) for cm in chunk_matches]
+    return [_shape_line_match(m) for m in file_entry.get("LineMatches") or []]
 
 
-def _shape_match(m: dict[str, Any]) -> dict[str, Any]:
-    line_number = _pick(m, "LineNumber", "lineNum", "Line", "line")
-    line_text = _pick(m, "LineContent", "Line", "line", "lineContent", default="")
-    # Fragments are zoekt's highlighted match segments; concat into a
-    # single snippet the agent can read.
-    fragments = _pick(m, "Fragments", "fragments", default=[]) or []
-    snippet = "".join(
-        f"{frag.get('pre', '')}{frag.get('match', '')}{frag.get('post', '')}"
-        for frag in fragments
-    )
+def _shape_chunk_match(cm: dict[str, Any]) -> dict[str, Any]:
+    content = _decode_line(cm.get("Content"))
+    content_start = cm.get("ContentStart") or {}
+    ranges_raw = cm.get("Ranges") or []
+    symbols_raw = cm.get("SymbolInfo") or []
     return {
-        "line": line_number,
-        "text": line_text if isinstance(line_text, str) else str(line_text),
-        "snippet": snippet or None,
-        "before": _pick(m, "Before", "before"),
-        "after": _pick(m, "After", "after"),
+        "line": cm.get("BestLineMatch") or content_start.get("LineNumber"),
+        "start_line": content_start.get("LineNumber"),
+        "text": content,
+        "ranges": [
+            {
+                "start_line": (r.get("Start") or {}).get("LineNumber"),
+                "start_col": (r.get("Start") or {}).get("Column"),
+                "end_line": (r.get("End") or {}).get("LineNumber"),
+                "end_col": (r.get("End") or {}).get("Column"),
+            }
+            for r in ranges_raw
+        ],
+        "symbols": [
+            {
+                "name": s.get("Sym"),
+                "kind": s.get("Kind"),
+                "parent": s.get("Parent") or None,
+            }
+            for s in symbols_raw
+            if s and s.get("Sym")
+        ]
+        or None,
     }
 
 
+def _shape_line_match(m: dict[str, Any]) -> dict[str, Any]:
+    line_text = _decode_line(m.get("Line"))
+    fragments = m.get("LineFragments") or []
+    highlights = [
+        {
+            "line_offset": frag.get("LineOffset"),
+            "length": frag.get("MatchLength"),
+        }
+        for frag in fragments
+    ]
+    return {
+        "line": m.get("LineNumber"),
+        "text": line_text,
+        "highlights": highlights or None,
+        "before": m.get("Before"),
+        "after": m.get("After"),
+    }
+
+
+def _decode_line(value: Any) -> str:
+    """Zoekt encodes ``Line`` as base64 bytes of the source line.
+
+    Decode defensively: if the value is not a base64 string, fall back
+    to ``str(value)`` so we never crash on a surprising response.
+    """
+    if not isinstance(value, str) or not value:
+        return "" if value is None else str(value)
+    try:
+        return base64.b64decode(value, validate=True).decode("utf-8", errors="replace")
+    except (ValueError, OSError):
+        return value
+
+
 def _shape_list_result(raw: dict[str, Any]) -> dict[str, Any]:
-    repos_raw = raw.get("Repos") or raw.get("repos") or raw.get("List") or []
+    repos_raw = raw.get("Repos") or []
     repos: list[dict[str, Any]] = []
     for entry in repos_raw:
-        # zoekt nests details under "Repository" in the List response.
-        repo = entry.get("Repository") or entry.get("repository") or entry
+        repo = entry.get("Repository") or {}
+        index_meta = entry.get("IndexMetadata") or {}
+        branches = [b.get("Name") for b in (repo.get("Branches") or []) if b.get("Name")]
         repos.append(
             {
-                "name": _pick(repo, "Name", "name", default=""),
-                "url": _pick(repo, "URL", "Url", "url", default=""),
-                "branches": [
-                    _pick(b, "Name", "name") for b in (_pick(repo, "Branches", "branches", default=[]) or [])
-                ],
-                "index_time": _pick(entry, "IndexMetadata", "indexMetadata"),
+                "name": repo.get("Name", ""),
+                "url": repo.get("URL", ""),
+                "source": repo.get("Source", ""),
+                "branches": branches,
+                "index_time": index_meta.get("IndexTime"),
+                "has_symbols": repo.get("HasSymbols"),
             }
         )
     return {"count": len(repos), "repos": repos}

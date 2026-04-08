@@ -43,6 +43,9 @@ services:
     image: sourcegraph/zoekt-indexserver:latest
     container_name: zoekt-mcp-indexer
     restart: "no"
+    # NOTE: docker compose interpolates $VAR / ${VAR} in YAML strings
+    # before the container ever sees them. To pass literal dollar signs
+    # through to the shell script below, every $ is doubled as $$.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -52,31 +55,31 @@ services:
 
         indexed=0
         for src in /src/*; do
-          [ -d "${src}" ] || continue
-          repo="$(basename "${src}")"
-          work="/tmp/${repo}"
-          rm -rf "${work}"
-          cp -r "${src}" "${work}"
-          cd "${work}"
+          [ -d "$${src}" ] || continue
+          repo="$$(basename "$${src}")"
+          work="/tmp/$${repo}"
+          rm -rf "$${work}"
+          cp -r "$${src}" "$${work}"
+          cd "$${work}"
           git init -q -b main
           git add -A
           if ! git -c commit.gpgsign=false commit -q -m "snapshot" 2>/dev/null; then
-            echo "Skipping ${repo}: nothing to commit"
+            echo "Skipping $${repo}: nothing to commit"
             continue
           fi
-          git config zoekt.name "${repo}"
-          echo "Indexing ${repo}..."
-          zoekt-git-index -branches main -index /data "${work}"
-          indexed=$((indexed + 1))
+          git config zoekt.name "$${repo}"
+          echo "Indexing $${repo}..."
+          zoekt-git-index -branches main -index /data "$${work}"
+          indexed=$$((indexed + 1))
         done
 
-        if [ "${indexed}" -eq 0 ]; then
+        if [ "$${indexed}" -eq 0 ]; then
           echo "WARNING: no repositories were indexed." >&2
-          echo "Populate \$ZOEKT_REPOS_DIR (default ./repos) with at least one directory." >&2
+          echo "Populate \$$ZOEKT_REPOS_DIR (default ./repos) with at least one directory." >&2
           exit 1
         fi
 
-        echo "Done. Indexed ${indexed} repo(s). Shards in /data:"
+        echo "Done. Indexed $${indexed} repo(s). Shards in /data:"
         ls -la /data
     volumes:
       - ${ZOEKT_REPOS_DIR:-./repos}:/src:ro
@@ -86,11 +89,18 @@ services:
     image: sourcegraph/zoekt-webserver:latest
     container_name: zoekt-mcp-webserver
     restart: unless-stopped
+    # The image's entrypoint is `tini --`, so the command has to start
+    # with the binary name for tini to exec it. `-rpc` registers the
+    # JSON API under /api/* — without it, requests to /api/search fall
+    # through to the HTML search handler and the client gets HTML back
+    # instead of JSON.
     command:
+      - "zoekt-webserver"
       - "-index"
       - "/data"
       - "-listen"
       - ":6070"
+      - "-rpc"
     ports:
       - "6070:6070"
     volumes:

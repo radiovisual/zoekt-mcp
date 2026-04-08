@@ -2,11 +2,12 @@
 
 Thin wrapper around the three zoekt-webserver endpoints we need:
 
-* ``POST /api/search`` — run a zoekt query.
-* ``POST /api/list``   — enumerate indexed repositories.
-* ``GET  /print``      — fetch a file's raw contents (scraped out of the HTML
-  response — zoekt-webserver does not expose a first-class "raw file" JSON
-  endpoint, so we extract the ``<pre>...</pre>`` block and unescape it).
+* ``POST /api/search`` — run a zoekt query (requires the server to have
+  been started with ``-rpc``, which registers the JSON API under
+  ``/api/*``; without it, requests fall through to the HTML handlers).
+* ``POST /api/list``   — enumerate indexed repositories (same gate).
+* ``GET  /print?format=raw`` — fetch a file's raw contents as
+  ``text/plain``.
 
 The client is intentionally dumb: it does not interpret query syntax and does
 not post-process match results beyond returning the JSON body. Response
@@ -15,8 +16,6 @@ shaping for the MCP tool surface lives in :mod:`zoekt_mcp.server`.
 
 from __future__ import annotations
 
-import html
-import re
 from types import TracebackType
 from typing import Any, Self
 
@@ -24,9 +23,6 @@ import httpx
 
 DEFAULT_BACKEND_URL = "http://localhost:6070"
 DEFAULT_TIMEOUT_SECONDS = 30.0
-
-_PRE_BLOCK_RE = re.compile(r"<pre[^>]*>(.*?)</pre>", re.DOTALL | re.IGNORECASE)
-_TAG_RE = re.compile(r"<[^>]+>")
 
 
 class ZoektBackendError(RuntimeError):
@@ -122,14 +118,13 @@ class ZoektClient:
         return data.get("List", data)
 
     async def get_file(self, repo: str, path: str, branch: str = "HEAD") -> str:
-        """Fetch raw file contents via the ``/print`` HTML endpoint.
+        """Fetch raw file contents via ``/print?format=raw``.
 
-        zoekt-webserver's ``/print`` returns an HTML page with the file body
-        inside a single ``<pre>`` block. We extract and unescape that block.
-        If the response doesn't match the expected shape, raise
-        :class:`ZoektBackendError` rather than return garbage.
+        Returns the file body as a plain string. Raises
+        :class:`ZoektBackendError` on any non-2xx response so the tool
+        layer can surface a useful message to the agent.
         """
-        params = {"r": repo, "f": path, "b": branch}
+        params = {"r": repo, "f": path, "b": branch, "format": "raw"}
         try:
             response = await self._http.get(f"{self.backend_url}/print", params=params)
         except httpx.HTTPError as exc:
@@ -142,18 +137,7 @@ class ZoektClient:
                 body=_truncate(response.text),
             )
 
-        match = _PRE_BLOCK_RE.search(response.text)
-        if not match:
-            raise ZoektBackendError(
-                "GET /print response did not contain a <pre> block",
-                status_code=response.status_code,
-                body=_truncate(response.text),
-            )
-        inner = match.group(1)
-        # /print typically wraps each line in <a>...</a> for line-number
-        # anchors; strip those tags and unescape entities.
-        stripped = _TAG_RE.sub("", inner)
-        return html.unescape(stripped)
+        return response.text
 
     # ------------------------------------------------------------------ #
     # Internals
