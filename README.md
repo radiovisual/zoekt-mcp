@@ -167,6 +167,137 @@ Zoekt's query DSL ([full reference](https://github.com/sourcegraph/zoekt/blob/ma
 | (whitespace) | `lang:go func main` | Boolean AND |
 | `or` | `def hello or function hello` | Boolean OR |
 
+## Keeping the index fresh
+
+Zoekt searches a **pre-built index**, not your files directly. When
+you edit code, the index doesn't auto-update — your next search can
+return stale line numbers, miss newly-added symbols, or point Claude
+at functions that have moved or been renamed. Stale search is the
+main thing that burns tokens, because Claude falls back to reading
+whole files with `get_file` when `search_code` returns nothing useful.
+
+Fortunately, re-indexing is fast (seconds, even for large repos),
+runs entirely in Docker, involves no LLM calls, and costs zero
+tokens. You just need to decide **how** you want to trigger it.
+
+### Step zero: point the indexer at your real code
+
+If you've been dropping clones into `deploy/repos/`, you've got two
+copies of each project: the one you actually edit, and the one zoekt
+sees. That's a freshness trap — even re-running the indexer re-reads
+the stale copy.
+
+The compose file reads `ZOEKT_REPOS_DIR` as an env var, so you can
+point it at your real projects directory instead:
+
+```bash
+# Linux/macOS: every subdir of ~/code becomes one searchable repo
+echo "ZOEKT_REPOS_DIR=/home/you/code" > deploy/.env
+
+docker compose -f deploy/docker-compose.yml down -v   # clear old index
+docker compose -f deploy/docker-compose.yml up -d     # re-index from ~/code
+```
+
+Now re-indexing reflects your actual edits instead of a stale copy.
+
+> On macOS / Windows Docker Desktop, the path you pick must be under
+> an allowed file-sharing root (check Docker Desktop → Settings →
+> Resources → File Sharing). On Linux there's no such restriction.
+
+### Recipes for triggering the re-index
+
+All four recipes run out-of-band — no Claude, no tokens, no context
+window involvement. Pick whichever matches how you work.
+
+#### 1. Manual re-index
+
+Run [`deploy/index.sh`](deploy/index.sh) whenever you know you've
+made significant changes. The script runs just the indexer container
+against the current `ZOEKT_REPOS_DIR` without bouncing the webserver,
+so search stays available throughout.
+
+```bash
+./deploy/index.sh
+```
+
+*Good when:* you only use Claude for occasional sessions and don't
+mind typing one command before you start. Zero background cost.
+
+#### 2. Cron (scheduled re-index)
+
+Background re-index on a schedule. No manual step, slightly stale
+between ticks.
+
+```cron
+# Re-index every 15 minutes
+*/15 * * * * cd /home/you/gitprojects/zoekt-mcp && ./deploy/index.sh >/dev/null 2>&1
+```
+
+*Good when:* you work on code most days and want fresh-ish search
+any time you open Claude. Once an hour is fine for most users.
+
+#### 3. Filesystem watcher
+
+React to file changes in near-real-time via `inotifywait` (Linux)
+or `fswatch` (macOS). Catches every edit, idle otherwise.
+
+```bash
+# Linux: one-liner, run it in a tmux pane or as a systemd --user service
+while inotifywait -r -e modify,create,delete,move \
+    --exclude '\.git/|node_modules/|__pycache__/' \
+    /home/you/code 2>/dev/null; do
+  ./deploy/index.sh
+done
+```
+
+```bash
+# macOS equivalent with fswatch (brew install fswatch)
+fswatch -o /Users/you/code | xargs -n1 -I{} ./deploy/index.sh
+```
+
+*Good when:* you want "search is always current, no matter when I
+ask." Caveat: on projects with noisy tooling (compilers writing to
+build dirs, IDE lockfiles), the excludes list is important — without
+them you'll re-index constantly.
+
+#### 4. Claude Code SessionStart hook
+
+Re-index every time you launch a new Claude Code session, so the
+first search of every session is guaranteed fresh. This is probably
+the best default for most users: no background process, no cron
+entry, and freshness is tied exactly to when you'd actually notice
+staleness.
+
+```json
+// ~/.claude.json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "command": "/home/you/gitprojects/zoekt-mcp/deploy/index.sh"
+      }
+    ]
+  }
+}
+```
+
+*Good when:* you want zero ongoing processes and guaranteed fresh
+search at the moment you actually use Claude. The session start is
+blocked on the re-index, but that's a few seconds at most.
+
+### Which one should I pick?
+
+| If you… | Use |
+|---------|-----|
+| …occasionally fire up Claude and don't mind a manual step | **Recipe 1** (manual) |
+| …want "set it and forget it" but tolerate N-minute staleness | **Recipe 2** (cron) |
+| …want always-fresh search and can tune the exclude list | **Recipe 3** (watcher) |
+| …mostly interact with code via Claude Code sessions | **Recipe 4** (SessionStart hook) |
+
+None of these recipes are exclusive — e.g. running cron *and* the
+SessionStart hook is fine if you want both ambient freshness and a
+guarantee at session start.
+
 ## Manual testing with MCP Inspector
 
 ```bash
