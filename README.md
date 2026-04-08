@@ -24,7 +24,29 @@ Claude Code / Desktop / Cursor  ──stdio──▶  zoekt-mcp (Python)  ──
 
 ## Quickstart
 
-### 1. Bring up the zoekt backend against your own code
+### Prerequisites
+
+- **Docker** — runs the zoekt-webserver backend and the one-shot
+  indexer. Any recent Docker Desktop or engine with Compose v2 works.
+- **[uv](https://docs.astral.sh/uv/)** — used by your MCP client to
+  spawn the Python server on demand. Install it once per machine
+  via the [official installer](https://docs.astral.sh/uv/getting-started/installation/),
+  Homebrew (`brew install uv`), or `pipx install uv`.
+
+You do **not** need to create a venv or `pip install` anything to
+*use* zoekt-mcp. `uv` handles that transparently on first invocation.
+A venv is only needed if you want to hack on the server itself — see
+[Development setup](#development-setup) below.
+
+### 1. Clone and bring up the backend
+
+You need a clone of this repo for the Docker Compose file and for a
+directory to drop indexable code into.
+
+```bash
+git clone https://github.com/wuergler/zoekt-mcp
+cd zoekt-mcp
+```
 
 Drop any git clones or source directories you want searchable into
 `deploy/repos/` (gitignored). Each top-level subdirectory becomes one
@@ -48,9 +70,9 @@ curl -s http://localhost:6070/healthz                                        # -
 curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | head -c 400
 ```
 
-> **Just want to see it work without cloning anything?** There's a
-> tiny Flask + Express verification corpus under `examples/` plus a
-> fixture helper that points the backend at it:
+> **Just want to see it work without populating `deploy/repos/`?**
+> There's a tiny Flask + Express verification corpus under
+> `examples/` plus a fixture helper that points the backend at it:
 >
 > ```bash
 > ./tests/fixtures/up.sh
@@ -58,26 +80,10 @@ curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | 
 >
 > See the "Automated tests" section below for details.
 
-### 2. Install the MCP server
+### 2. Wire it into your MCP client
 
-Using [uv](https://docs.astral.sh/uv/) (recommended):
-
-```bash
-# Run it without installing (works from a checkout of this repo):
-uvx --from . zoekt-mcp --backend http://localhost:6070
-
-# Or install it so `zoekt-mcp` is on $PATH:
-uv tool install .
-```
-
-If you prefer pip/pipx:
-
-```bash
-pipx install .
-zoekt-mcp --backend http://localhost:6070
-```
-
-### 3. Wire it into your MCP client
+`uvx` will build and run the server directly from your clone — no
+explicit install step. Point your MCP client at it:
 
 #### Claude Code (`~/.claude.json`)
 
@@ -117,11 +123,16 @@ claude mcp add zoekt uvx --from /absolute/path/to/zoekt-mcp zoekt-mcp
 Restart the client and the three tools (`search_code`, `list_repos`,
 `get_file`) should appear.
 
+> Once zoekt-mcp is published to PyPI, the `--from` argument goes
+> away and the config collapses to `"args": ["zoekt-mcp"]` — no
+> clone required for the Python side. The backend still needs the
+> compose file from this repo.
+
 ## Tool surface
 
 | Tool | Parameters | Returns |
 |------|------------|---------|
-| `search_code` | `query: str`, `max_results: int = 50`, `context_lines: int = 3` | `{query, file_count, match_count, duration_ms, files: [{repo, file, language, branches, matches: [{line, text, snippet, before, after}]}]}` |
+| `search_code` | `query: str`, `max_results: int = 50`, `context_lines: int = 3` | `{query, file_count, match_count, duration_ns, files: [{repo, file, language, branches, matches: [{line, text, ranges, symbols}]}]}` |
 | `list_repos` | `filter: str = ""` (optional `repo:` atom) | `{count, repos: [{name, url, branches, index_time}]}` |
 | `get_file` | `repo: str`, `path: str`, `branch: str = "HEAD"` | `{repo, path, branch, content}` |
 
@@ -156,16 +167,50 @@ The Inspector opens a browser UI on `http://localhost:6274`. Under **Tools**
 Under **Tools → list_repos**, an empty filter should return both
 `flask-app` and `express-app`.
 
+## Development setup
+
+If you want to hack on the server itself (rather than just use it via
+`uvx`), set up a local venv with `uv` bootstrapped inside it. This
+keeps `uv` scoped to the project — nothing gets installed globally.
+
+```bash
+# 1. Create a venv using the system Python
+python3 -m venv .venv
+
+# 2. Bootstrap uv into the venv (one-time, chicken-and-egg step)
+.venv/bin/pip install uv
+
+# 3. Let uv take over from here — installs all runtime + dev deps
+.venv/bin/uv sync
+```
+
+After this, every dev command goes through `.venv/bin/uv`:
+
+```bash
+.venv/bin/uv run pytest              # run the full test suite
+.venv/bin/uv run zoekt-mcp --help    # run the CLI from source
+.venv/bin/uv add <package>           # add a new runtime dep
+.venv/bin/uv lock --upgrade          # refresh uv.lock
+```
+
+If you activate the venv (`source .venv/bin/activate`), you can drop
+the `.venv/bin/` prefix and just call `uv ...` directly.
+
+Dev dependencies (`pytest`, `pytest-asyncio`, `respx`) live in the
+`dev` group in [`pyproject.toml`](pyproject.toml) and are installed
+by default on `uv sync`. Runtime-only installs can use
+`uv sync --no-dev`.
+
 ## Automated tests
 
 ```bash
 # Unit tests (no Docker required)
-uv run pytest tests/test_client_unit.py -v
+.venv/bin/uv run pytest tests/test_client_unit.py tests/test_server_shaping.py -v
 
 # Integration tests: bring the stack up against the examples/ corpus,
 # then run the live assertions.
 ./tests/fixtures/up.sh
-uv run pytest tests/test_integration.py -v
+.venv/bin/uv run pytest tests/test_integration.py -v
 ./tests/fixtures/down.sh
 ```
 
@@ -173,7 +218,8 @@ uv run pytest tests/test_integration.py -v
 the same `deploy/docker-compose.yml`, so the test fixtures don't leak
 into the production deploy path. The integration tests skip
 automatically when `ZOEKT_URL` is unreachable, so a plain
-`uv run pytest` in a fresh checkout without Docker still passes.
+`.venv/bin/uv run pytest` in a fresh checkout without Docker still
+passes.
 
 ## Configuration
 
