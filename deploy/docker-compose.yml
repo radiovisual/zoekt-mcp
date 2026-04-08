@@ -61,6 +61,11 @@ services:
           rm -rf "$${work}"
           cp -r "$${src}" "$${work}"
           cd "$${work}"
+          # Wipe any pre-existing .git so a user-dropped `git clone`
+          # doesn't collide with our throwaway snapshot repo. We only
+          # need file contents; zoekt-git-index will build its own
+          # history from the single snapshot commit we create below.
+          rm -rf .git
           git init -q -b main
           git add -A
           if ! git -c commit.gpgsign=false commit -q -m "snapshot" 2>/dev/null; then
