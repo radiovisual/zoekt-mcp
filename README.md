@@ -399,6 +399,29 @@ uv add --dev <package>           # add a new dev dep
 uv lock --upgrade                # refresh uv.lock
 ```
 
+### Linting
+
+Markdown is linted with
+[pymarkdownlnt](https://github.com/jackdewinter/pymarkdown), configured
+under `[tool.pymarkdown]` in [`pyproject.toml`](pyproject.toml). Run
+the linter against every project-owned markdown file with:
+
+```bash
+uv run pymarkdown scan README.md deploy/README.md examples/*/README.md
+```
+
+The linting step must pass before committing documentation changes.
+To check a single file while iterating:
+
+```bash
+uv run pymarkdown scan README.md
+```
+
+Most default rules are enabled; we disable `MD013` (line length) and
+`MD046` (code block style) because they fight readable prose and
+tables full of long URLs. Tweak the configuration in `pyproject.toml`
+if you need to relax or re-enable other rules.
+
 ## Automated tests
 
 ```bash

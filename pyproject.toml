@@ -26,6 +26,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pymarkdownlnt>=0.9.36",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
@@ -48,3 +49,14 @@ packages = ["src/zoekt_mcp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+# Markdown linting (pymarkdownlnt). Run via `uv run pymarkdown scan .`
+# or the helper alias in the Development setup section of README.md.
+[tool.pymarkdown]
+# Line length is hostile to documentation with long URLs, code fences,
+# and wide tables. We wrap prose by hand; rule MD013 is off.
+plugins.md013.enabled = false
+# Markdown inside tight lists (e.g. list items with fenced code under
+# them) trips MD046 / MD032 in ways that fight readable formatting.
+# We keep the core rules on and only relax the ones that fight us.
+plugins.md046.enabled = false
