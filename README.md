@@ -93,41 +93,74 @@ You do **not** need to create a venv or `pip install` anything to
 A venv is only needed if you want to hack on the server itself; see
 [Development setup](#development-setup) below.
 
-### 1. Clone and bring up the backend
+### 1. Clone this repo
 
-You need a clone of this repo for the Docker Compose file and for a
-directory to drop indexable code into.
+You need a clone for the Docker Compose file and the helper scripts.
+The Python server itself runs from the clone via `uvx --from` — no
+install step required.
 
 ```bash
-git clone https://github.com/wuergler/zoekt-mcp
+git clone https://github.com/radiovisual/zoekt-mcp
 cd zoekt-mcp
 ```
 
-Drop any git clones or source directories you want searchable into
-`deploy/repos/` (gitignored). Each top-level subdirectory becomes one
-zoekt repo.
+### 2. Point the indexer at your code
+
+Tell the backend where your code lives by setting `ZOEKT_REPOS_DIR`
+to any parent directory on your machine. **Every top-level
+subdirectory of that path becomes one searchable repo in zoekt.**
+
+The easiest way is a one-line `.env` file in `deploy/` — docker
+compose picks it up automatically:
 
 ```bash
-mkdir -p deploy/repos
-git clone https://github.com/myorg/myrepo deploy/repos/myrepo
+echo "ZOEKT_REPOS_DIR=/home/you/code" > deploy/.env
+```
 
+So if your projects directory looks like this:
+
+```text
+~/code/
+├── project-a/       → indexed as zoekt repo "project-a"
+├── project-b/       → indexed as zoekt repo "project-b"
+└── scratch-notes/   → indexed as zoekt repo "scratch-notes"
+```
+
+…zoekt indexes **all three repos in one pass** and you can scope any
+query with `repo:project-a` — or leave `repo:` off to search across
+everything at once. See
+[Indexing multiple codebases](#indexing-multiple-codebases) below for
+more on the one-server-many-repos model.
+
+> On macOS / Windows Docker Desktop, the path you pick must be under
+> an allowed file-sharing root (check Docker Desktop → Settings →
+> Resources → File Sharing). On Linux there's no such restriction.
+
+### 3. Bring up the backend
+
+```bash
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The `zoekt-indexer` one-shot indexes everything under `deploy/repos/`
-into a named volume, then `zoekt-webserver` serves the HTTP JSON API
-on port `6070`. See [`deploy/README.md`](deploy/README.md) for details.
+The `zoekt-indexer` one-shot reads everything under `ZOEKT_REPOS_DIR`
+and writes shards to a named volume. Then `zoekt-webserver` serves
+the HTTP JSON API on `localhost:6070`, reading from the same volume.
+See [`deploy/README.md`](deploy/README.md) for details.
 
 Sanity check:
 
 ```bash
-curl -s http://localhost:6070/healthz                                        # -> "OK"
-curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | head -c 400
+curl -s -XPOST -d '{"Q":"repo:."}' http://localhost:6070/api/list \
+  | python3 -m json.tool | head -20
 ```
 
-> **Just want to see it work without populating `deploy/repos/`?**
+You should see each subdirectory of `ZOEKT_REPOS_DIR` listed as a
+zoekt repo.
+
+> **Just want to try it without touching your real code directory?**
 > There's a tiny Flask + Express verification corpus under
-> `examples/` plus a fixture helper that points the backend at it:
+> `examples/` plus a fixture helper that spins up the stack against
+> it:
 >
 > ```bash
 > ./tests/fixtures/up.sh
@@ -135,7 +168,7 @@ curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | 
 >
 > See the "Automated tests" section below for details.
 
-### 2. Wire it into your MCP client
+### 4. Wire it into your MCP client
 
 `uvx` will build and run the server directly from your clone — no
 explicit install step. Point your MCP client at it:
@@ -182,6 +215,115 @@ Restart the client and the three tools (`search_code`, `list_repos`,
 > away and the config collapses to `"args": ["zoekt-mcp"]` — no
 > clone required for the Python side. The backend still needs the
 > compose file from this repo.
+
+## Indexing multiple codebases
+
+**One zoekt-mcp server handles as many repos as you want** — that's
+the default. Every top-level subdirectory of `ZOEKT_REPOS_DIR` becomes
+a separate searchable repo in one shared index. The `search_code`
+tool can scope to a subset with `repo:NAME` (regex matched against
+repo names) or leave `repo:` off to search across everything.
+
+If your projects live under different parent directories (e.g.
+`~/work/` and `~/personal/`), the simplest fix is to create a single
+"index root" directory with symlinks pointing at each project and set
+`ZOEKT_REPOS_DIR` to that index root. One server, one config, all
+repos searchable.
+
+```bash
+mkdir -p ~/.zoekt-root
+ln -s ~/work/project-a       ~/.zoekt-root/project-a
+ln -s ~/personal/side-thing  ~/.zoekt-root/side-thing
+echo "ZOEKT_REPOS_DIR=$HOME/.zoekt-root" > deploy/.env
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+> Docker has to follow the symlinks when it resolves the bind mount,
+> which works on Linux but is hit-or-miss on Docker Desktop. If the
+> linked directories don't show up inside the container, fall back
+> to putting real directories (or clones) under `~/.zoekt-root`
+> instead of symlinks.
+
+### When you actually need two servers
+
+A second zoekt-mcp instance is only worth the setup cost when you
+want **fully isolated index pools** — for example, keeping work code
+and personal code in completely separate search namespaces, or
+running two different backends (e.g. different zoekt versions) side
+by side. It is **not** needed just to index more code; one server
+with many subdirectories is the right tool for that.
+
+If you genuinely want two instances:
+
+1. Copy `deploy/docker-compose.yml` to a second file, e.g.
+   `deploy/docker-compose.personal.yml`.
+2. In the copy, change:
+   - the compose project `name:` (e.g. `zoekt-mcp-personal`)
+   - the host port mapping (e.g. `6071:6070`)
+   - the named volume (e.g. `zoekt-mcp-personal-index`)
+   - the container names (e.g. `zoekt-mcp-personal-webserver`)
+3. Give the second stack its own env file, e.g.
+   `deploy/.env.personal`, pointing `ZOEKT_REPOS_DIR` at a different
+   directory.
+4. Bring each stack up with its own compose file and env file:
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml up -d
+   docker compose -f deploy/docker-compose.personal.yml \
+     --env-file deploy/.env.personal up -d
+   ```
+
+5. Wire both into Claude Code as distinct MCP servers — they can
+   point at the same `zoekt-mcp` clone, just with different
+   `ZOEKT_URL` values:
+
+   ```json
+   {
+     "mcpServers": {
+       "zoekt-work": {
+         "command": "uvx",
+         "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+         "env": { "ZOEKT_URL": "http://localhost:6070" }
+       },
+       "zoekt-personal": {
+         "command": "uvx",
+         "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+         "env": { "ZOEKT_URL": "http://localhost:6071" }
+       }
+     }
+   }
+   ```
+
+Claude Code sees two independent sets of tools (`search_code` /
+`list_repos` / `get_file` from each namespace) and decides which to
+call based on the question.
+
+For most users, **one server with a well-populated `ZOEKT_REPOS_DIR`
+is all you need.** Don't reach for multi-server unless you have a
+concrete reason to isolate.
+
+### Advanced: staging code under `deploy/repos/`
+
+As an alternative to pointing `ZOEKT_REPOS_DIR` at your real code,
+you can drop clones or directories directly into `deploy/repos/`
+(gitignored) and leave the default mount path alone:
+
+```bash
+mkdir -p deploy/repos
+git clone https://github.com/myorg/myrepo deploy/repos/myrepo
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+This is useful when you can't expose your real code directory to
+Docker (e.g. corporate file-sharing restrictions on Docker Desktop),
+or for one-off experiments with a repo you don't have locally.
+
+The trade-off is a **freshness trap**: you now have two copies of
+every project — the one you actually edit, and the copy under
+`deploy/repos/`. Re-running the indexer re-reads the stale copy, so
+you'd need to `git pull` (or `cp -r` your edits) inside
+`deploy/repos/myrepo/` before each re-index. Prefer the main
+`ZOEKT_REPOS_DIR` workflow unless you have a specific reason not to.
 
 ## Tool surface
 
@@ -239,29 +381,12 @@ Fortunately, re-indexing is fast (seconds, even for large repos),
 runs entirely in Docker, involves no LLM calls, and costs zero
 tokens. You just need to decide **how** you want to trigger it.
 
-### Step zero: point the indexer at your real code
-
-If you've been dropping clones into `deploy/repos/`, you've got two
-copies of each project: the one you actually edit, and the one zoekt
-sees. That's a freshness trap — even re-running the indexer re-reads
-the stale copy.
-
-The compose file reads `ZOEKT_REPOS_DIR` as an env var, so you can
-point it at your real projects directory instead:
-
-```bash
-# Linux/macOS: every subdir of ~/code becomes one searchable repo
-echo "ZOEKT_REPOS_DIR=/home/you/code" > deploy/.env
-
-docker compose -f deploy/docker-compose.yml down -v   # clear old index
-docker compose -f deploy/docker-compose.yml up -d     # re-index from ~/code
-```
-
-Now re-indexing reflects your actual edits instead of a stale copy.
-
-> On macOS / Windows Docker Desktop, the path you pick must be under
-> an allowed file-sharing root (check Docker Desktop → Settings →
-> Resources → File Sharing). On Linux there's no such restriction.
+Because the main quickstart already points `ZOEKT_REPOS_DIR` at your
+live code directory, every re-index automatically reflects your
+latest edits — no copy step to keep in sync. (If you're on the
+[advanced staging workflow](#advanced-staging-code-under-deployrepos)
+instead, update the clones under `deploy/repos/` before you trigger
+a re-index, otherwise zoekt just re-reads the stale copies.)
 
 ### Recipes for triggering the re-index
 

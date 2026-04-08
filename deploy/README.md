@@ -16,18 +16,21 @@ indexed via the `ZOEKT_REPOS_DIR` environment variable (default:
   - `zoekt-webserver` serves the HTTP JSON API on
     [http://localhost:6070](http://localhost:6070) and reads from the
     same volume.
-- **`repos/`** — the default source mount. Put real git clones or
-  plain source trees under here; each top-level subdirectory becomes
-  one searchable repo in zoekt. Contents are gitignored.
+- **`repos/`** — a local fallback source mount. Empty by default; used
+  only if you don't set `ZOEKT_REPOS_DIR` to point at your real code
+  directory. Contents are gitignored.
 - **`index.sh`** — helper that reruns just the indexer after you edit
   or add sources under the mount.
 
-## Bring it up with your own code
+## Bring it up with your own code (recommended)
+
+Set `ZOEKT_REPOS_DIR` to any parent directory on your machine. Every
+top-level subdirectory of that path becomes one searchable repo in
+zoekt — one server, many codebases, zero copying.
 
 ```bash
-mkdir -p deploy/repos
-git clone https://github.com/myorg/myrepo deploy/repos/myrepo
-git clone https://github.com/myorg/another deploy/repos/another
+# One-line .env file; docker compose picks it up automatically.
+echo "ZOEKT_REPOS_DIR=/home/you/code" > deploy/.env
 
 docker compose -f deploy/docker-compose.yml up -d
 ```
@@ -36,9 +39,29 @@ The indexer runs first; once it exits successfully the webserver
 starts. Verify:
 
 ```bash
-curl -s http://localhost:6070/healthz            # -> "OK"
-curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | head -c 400
+curl -s -XPOST -d '{"Q":"repo:."}' http://localhost:6070/api/list \
+  | python3 -m json.tool | head -20
 ```
+
+## Alternative: stage clones under `deploy/repos/`
+
+If you can't expose your real code directory to Docker (e.g. Docker
+Desktop file-sharing restrictions) or you just want to stage a one-off
+experiment, leave `ZOEKT_REPOS_DIR` unset — it defaults to `./repos`
+— and drop clones or plain directories into `deploy/repos/`:
+
+```bash
+mkdir -p deploy/repos
+git clone https://github.com/myorg/myrepo deploy/repos/myrepo
+
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+Caveat: this creates two copies of each project (the one you edit,
+and the copy under `deploy/repos/`). Re-running the indexer only sees
+the `deploy/repos/` copy, so you have to `git pull` (or `cp -r` your
+edits) before re-indexing. Prefer `ZOEKT_REPOS_DIR` for day-to-day
+use.
 
 ## Bring it up against the in-repo test corpus
 
