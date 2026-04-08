@@ -2,26 +2,39 @@
 #
 # Two services share a named volume holding the zoekt index files:
 #
-#   1. zoekt-indexer — one-shot. Runs `zoekt-index` across every
-#      directory under examples/ (mounted read-only at /src) and writes
-#      the resulting index shards to /data.
+#   1. zoekt-indexer — one-shot. Mounts the directory pointed to by
+#      the ZOEKT_REPOS_DIR env var (default: ./repos, a gitignored
+#      scratch dir under deploy/) read-only at /src, loops over every
+#      top-level subdirectory, turns each one into a throwaway git
+#      repo, and runs `zoekt-git-index` so the shards land in the
+#      shared index volume.
+#
+#      We go through a throwaway git repo because the published
+#      `sourcegraph/zoekt-indexserver` image ships only zoekt-git-index
+#      (not the generic zoekt-index binary), so any directory we want
+#      to index has to look like a git repo first.
 #
 #   2. zoekt-webserver — long-running. Serves the HTTP JSON API on
 #      port 6070, reading from the same index volume. Waits for the
 #      indexer to finish successfully before starting.
 #
-# Run from the repo root:
+# Typical use:
 #
+#   # 1. drop code to search into deploy/repos/ (git clones, symlinks,
+#   #    or plain directories — each top-level subdir becomes one
+#   #    searchable "repo" in zoekt)
+#   mkdir -p deploy/repos
+#   git clone https://github.com/myorg/myrepo deploy/repos/myrepo
+#
+#   # 2. bring the stack up
 #   docker compose -f deploy/docker-compose.yml up -d
 #
-# To rebuild the index after editing examples/, rerun just the
-# indexer:
-#
+#   # 3. to rebuild the index after editing source under deploy/repos/:
 #   ./deploy/index.sh
 #
-# Both images are the combined builds published by Sourcegraph on
-# Docker Hub; all zoekt binaries (zoekt-index, zoekt-git-index,
-# zoekt-webserver, ...) are available under /usr/local/bin in each.
+# To point the backend at a different directory (e.g. the test
+# corpus under examples/), set ZOEKT_REPOS_DIR before invoking
+# compose. See tests/fixtures/up.sh for the integration-test wiring.
 
 name: zoekt-mcp-backend
 
@@ -34,14 +47,39 @@ services:
     command:
       - |
         set -eu
-        echo "Indexing examples/flask-app..."
-        zoekt-index -index /data /src/flask-app
-        echo "Indexing examples/express-app..."
-        zoekt-index -index /data /src/express-app
-        echo "Done. Indexed shards:"
+        git config --global user.email "zoekt-indexer@example.com"
+        git config --global user.name "zoekt indexer"
+
+        indexed=0
+        for src in /src/*; do
+          [ -d "${src}" ] || continue
+          repo="$(basename "${src}")"
+          work="/tmp/${repo}"
+          rm -rf "${work}"
+          cp -r "${src}" "${work}"
+          cd "${work}"
+          git init -q -b main
+          git add -A
+          if ! git -c commit.gpgsign=false commit -q -m "snapshot" 2>/dev/null; then
+            echo "Skipping ${repo}: nothing to commit"
+            continue
+          fi
+          git config zoekt.name "${repo}"
+          echo "Indexing ${repo}..."
+          zoekt-git-index -branches main -index /data "${work}"
+          indexed=$((indexed + 1))
+        done
+
+        if [ "${indexed}" -eq 0 ]; then
+          echo "WARNING: no repositories were indexed." >&2
+          echo "Populate \$ZOEKT_REPOS_DIR (default ./repos) with at least one directory." >&2
+          exit 1
+        fi
+
+        echo "Done. Indexed ${indexed} repo(s). Shards in /data:"
         ls -la /data
     volumes:
-      - ../examples:/src:ro
+      - ${ZOEKT_REPOS_DIR:-./repos}:/src:ro
       - zoekt-index:/data
 
   zoekt-webserver:

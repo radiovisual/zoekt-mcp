@@ -24,23 +24,39 @@ Claude Code / Desktop / Cursor  ──stdio──▶  zoekt-mcp (Python)  ──
 
 ## Quickstart
 
-### 1. Bring up the zoekt backend
+### 1. Bring up the zoekt backend against your own code
+
+Drop any git clones or source directories you want searchable into
+`deploy/repos/` (gitignored). Each top-level subdirectory becomes one
+zoekt repo.
 
 ```bash
+mkdir -p deploy/repos
+git clone https://github.com/myorg/myrepo deploy/repos/myrepo
+
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The `zoekt-indexer` service indexes everything under `examples/` into a
-named volume, then `zoekt-webserver` serves the HTTP JSON API on port
-`6070`. See [`deploy/README.md`](deploy/README.md) for details, including
-how to re-index after editing `examples/`.
+The `zoekt-indexer` one-shot indexes everything under `deploy/repos/`
+into a named volume, then `zoekt-webserver` serves the HTTP JSON API
+on port `6070`. See [`deploy/README.md`](deploy/README.md) for details.
 
 Sanity check:
 
 ```bash
 curl -s http://localhost:6070/healthz                                        # -> "OK"
-curl -s -XPOST -d '{"Q":"def hello"}' http://localhost:6070/api/search | head -c 400
+curl -s -XPOST -d '{"Q":"repo:myrepo func"}' http://localhost:6070/api/search | head -c 400
 ```
+
+> **Just want to see it work without cloning anything?** There's a
+> tiny Flask + Express verification corpus under `examples/` plus a
+> fixture helper that points the backend at it:
+>
+> ```bash
+> ./tests/fixtures/up.sh
+> ```
+>
+> See the "Automated tests" section below for details.
 
 ### 2. Install the MCP server
 
@@ -146,13 +162,18 @@ Under **Tools → list_repos**, an empty filter should return both
 # Unit tests (no Docker required)
 uv run pytest tests/test_client_unit.py -v
 
-# Integration tests (require the docker-compose stack to be up)
-docker compose -f deploy/docker-compose.yml up -d
+# Integration tests: bring the stack up against the examples/ corpus,
+# then run the live assertions.
+./tests/fixtures/up.sh
 uv run pytest tests/test_integration.py -v
+./tests/fixtures/down.sh
 ```
 
-The integration tests skip automatically when `ZOEKT_URL` is unreachable,
-so `uv run pytest` in a fresh checkout without Docker still passes.
+`tests/fixtures/up.sh` sets `ZOEKT_REPOS_DIR=../examples` and invokes
+the same `deploy/docker-compose.yml`, so the test fixtures don't leak
+into the production deploy path. The integration tests skip
+automatically when `ZOEKT_URL` is unreachable, so a plain
+`uv run pytest` in a fresh checkout without Docker still passes.
 
 ## Configuration
 
@@ -166,11 +187,16 @@ so `uv run pytest` in a fresh checkout without Docker still passes.
 ```
 zoekt-mcp/
 ├── src/zoekt_mcp/         # the Python MCP server
-├── tests/                 # unit + integration tests
-├── deploy/                # docker-compose for zoekt-webserver
+├── tests/
+│   ├── test_client_unit.py     # offline unit tests
+│   ├── test_integration.py     # live tests (skip when backend down)
+│   └── fixtures/               # test-only helpers (up.sh / down.sh)
+├── deploy/
+│   ├── docker-compose.yml      # generic zoekt backend (env-driven)
+│   └── repos/                  # user-populated source mount (gitignored)
 └── examples/
-    ├── flask-app/         # tiny Flask verification corpus
-    └── express-app/       # tiny Express verification corpus
+    ├── flask-app/              # Flask verification corpus
+    └── express-app/            # Express verification corpus
 ```
 
 ## License

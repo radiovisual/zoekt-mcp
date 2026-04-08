@@ -45,3 +45,9 @@ package-lock.json
 # Zoekt local index (shouldn't be committed)
 deploy/.data/
 *.zoekt
+
+# User-populated zoekt search corpus (deploy/repos/ holds real clones
+# that each user drops in themselves; keep the directory but not the
+# contents).
+deploy/repos/*
+!deploy/repos/.gitkeep
