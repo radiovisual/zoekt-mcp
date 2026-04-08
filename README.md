@@ -15,11 +15,50 @@ over your repositories regardless of the language you're working in.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph Client["MCP client"]
+        CC["Claude Code<br/>Claude Desktop<br/>Cursor, etc."]
+    end
+
+    subgraph Server["zoekt-mcp (Python)"]
+        Tools["search_code<br/>list_repos<br/>get_file"]
+    end
+
+    subgraph Backend["Docker: zoekt backend"]
+        Web["zoekt-webserver"]
+        Idx[("zoekt index<br/>named volume")]
+        Indexer["zoekt-indexer<br/>(one-shot)"]
+    end
+
+    Code[("Your code<br/>bind mount")]
+
+    CC <-->|"stdio<br/>MCP protocol"| Tools
+    Tools <-->|"HTTP JSON<br/>/api/search<br/>/api/list<br/>/print"| Web
+    Web --> Idx
+    Code --> Indexer
+    Indexer --> Idx
 ```
-Claude Code / Desktop / Cursor  ──stdio──▶  zoekt-mcp (Python)  ──HTTP──▶  zoekt-webserver (Docker)
-                                                                                  ▲
-                                                                                  │ indexes
-                                                                            examples/*
+
+### How a single search flows through the system
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant Claude as Claude Code
+    participant MCP as zoekt-mcp
+    participant Web as zoekt-webserver
+    participant Idx as zoekt index
+
+    You->>Claude: "where is getVideoId defined?"
+    Claude->>MCP: search_code("sym:getVideoId")
+    MCP->>Web: POST /api/search
+    Web->>Idx: scan shards
+    Idx-->>Web: matches + ctags symbols
+    Web-->>MCP: raw JSON result
+    Note over MCP: trim to {repo, file,<br/>line, text, symbols}
+    MCP-->>Claude: shaped result
+    Claude-->>You: "src/index.js:17 (function)"
 ```
 
 ## Quickstart
@@ -176,6 +215,26 @@ at functions that have moved or been renamed. Stale search is the
 main thing that burns tokens, because Claude falls back to reading
 whole files with `get_file` when `search_code` returns nothing useful.
 
+Here's what happens every time the indexer runs:
+
+```mermaid
+flowchart LR
+    Src["Your code<br/>(live files)"]
+    Mount["/src<br/>(read-only<br/>bind mount)"]
+    Scratch["/tmp/{repo}<br/>(ephemeral<br/>copy)"]
+    Git["throwaway<br/>git repo<br/>+ snapshot commit"]
+    Shard[("index shard<br/>/data/*.zoekt")]
+
+    Src -->|bind mount| Mount
+    Mount -->|cp -r| Scratch
+    Scratch -->|"git init; git add -A;<br/>git commit"| Git
+    Git -->|zoekt-git-index| Shard
+```
+
+The copy to `/tmp/` is ephemeral — it happens fresh on every indexer
+run and never touches your real files. Each refresh always reads
+whatever is currently in the mounted source directory.
+
 Fortunately, re-indexing is fast (seconds, even for large repos),
 runs entirely in Docker, involves no LLM calls, and costs zero
 tokens. You just need to decide **how** you want to trigger it.
@@ -230,7 +289,7 @@ between ticks.
 
 ```cron
 # Re-index every 15 minutes
-*/15 * * * * cd /home/you/gitprojects/zoekt-mcp && ./deploy/index.sh >/dev/null 2>&1
+*/15 * * * * cd /path/to/your/project/zoekt-mcp && ./deploy/index.sh >/dev/null 2>&1
 ```
 
 *Good when:* you work on code most days and want fresh-ish search
@@ -245,7 +304,7 @@ or `fswatch` (macOS). Catches every edit, idle otherwise.
 # Linux: one-liner, run it in a tmux pane or as a systemd --user service
 while inotifywait -r -e modify,create,delete,move \
     --exclude '\.git/|node_modules/|__pycache__/' \
-    /home/you/code 2>/dev/null; do
+    /path/to/your/project 2>/dev/null; do
   ./deploy/index.sh
 done
 ```
@@ -274,7 +333,7 @@ staleness.
   "hooks": {
     "SessionStart": [
       {
-        "command": "/home/you/gitprojects/zoekt-mcp/deploy/index.sh"
+        "command": "/path/to/your/project/zoekt-mcp/deploy/index.sh"
       }
     ]
   }
@@ -320,7 +379,7 @@ If you want to hack on the server itself (rather than just use it via
 `uvx`), clone the repo and let `uv` manage the venv for you:
 
 ```bash
-git clone https://github.com/wuergler/zoekt-mcp
+git clone https://github.com/radiovisual/zoekt-mcp
 cd zoekt-mcp
 uv sync
 ```
@@ -368,7 +427,7 @@ automatically when `ZOEKT_URL` is unreachable, so a plain
 
 ## Repo layout
 
-```
+```text
 zoekt-mcp/
 ├── src/zoekt_mcp/         # the Python MCP server
 ├── tests/
