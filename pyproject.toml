@@ -38,8 +38,8 @@ dev = [
 zoekt-mcp = "zoekt_mcp.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/wuergler/zoekt-mcp"
-Issues = "https://github.com/wuergler/zoekt-mcp/issues"
+Repository = "https://github.com/radiovisual/zoekt-mcp"
+Issues = "https://github.com/radiovisual/zoekt-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]

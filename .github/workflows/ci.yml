@@ -69,3 +69,36 @@ jobs:
       # the offline suites to keep the workflow hermetic.
       - name: pytest (unit)
         run: uv run pytest tests/test_client_unit.py tests/test_server_shaping.py -v
+
+  # -------------------------------------------------------------------
+  # Validate server.json against the MCP Registry's live schema.
+  #
+  # This is the same `mcp-publisher validate` command a human would run
+  # locally; it POSTs the file to registry.modelcontextprotocol.io,
+  # which checks the JSON schema AND enforces field-level constraints
+  # that aren't in the schema (most famously the 100-char description
+  # cap). We run it in CI rather than pre-commit because it needs
+  # network access and the mcp-publisher binary installed — both of
+  # which would slow every local commit and force contributors to
+  # install extra tooling. CI is always online and stateless, so it's
+  # the right home for this check.
+  #
+  # Always runs (not path-filtered): the cost is ~3s total, and
+  # catching a broken server.json before a tag push is worth the
+  # rounding-error CI time.
+  # -------------------------------------------------------------------
+  validate-server-json:
+    name: Validate server.json (MCP Registry)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Validate
+        run: ./mcp-publisher validate

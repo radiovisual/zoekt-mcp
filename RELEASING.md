@@ -201,6 +201,90 @@ curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=zoekt-mcp"
   | python3 -m json.tool
 ```
 
+## Working with `server.json`
+
+`server.json` at the repo root is the manifest the `publish-mcp-registry`
+job sends to
+[registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/).
+Most of it is static (name, description, env vars, package list) and
+you edit it like any other file. A few things are non-obvious and
+worth knowing before you touch it.
+
+### The version fields are placeholders — leave them at `0.0.0`
+
+Three fields in `server.json` encode the release version:
+
+- `.version`
+- `.packages[0].version` (the PyPI entry)
+- `.packages[1].identifier` (the OCI entry — the version is inside
+  the image tag, e.g. `ghcr.io/radiovisual/zoekt-mcp:0.3.0`)
+
+The committed file keeps all three pinned at `0.0.0`. The
+`publish-mcp-registry` job patches them on the fly from the git tag
+(see the `jq` invocation in `.github/workflows/release.yml`) before
+it calls `mcp-publisher publish`. This keeps the git tag as the
+**single source of truth** for versioning — you never have to remember
+to bump `server.json` alongside `pyproject.toml`.
+
+Do not hand-bump the version fields. If you do, the CI patch step
+will just overwrite your change.
+
+### Description is hard-capped at 100 characters
+
+The MCP Registry enforces `len(description) <= 100` server-side, and
+this limit is NOT in the published JSON Schema — so `mcp-publisher
+validate` only catches it because it POSTs the file to the live
+registry (a schema-only validator would pass a 300-char description
+and then fail at publish time). When you edit `.description`, count
+characters before committing or run `mcp-publisher validate` locally.
+
+### Validating locally
+
+Install `mcp-publisher` once:
+
+```bash
+curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+  | tar xz mcp-publisher
+sudo mv mcp-publisher /usr/local/bin/
+```
+
+Then validate from the repo root whenever you edit the file:
+
+```bash
+mcp-publisher validate
+```
+
+This hits the live registry's validation endpoint, so it enforces
+both the JSON Schema and the field-level constraints (length caps,
+allowed enum values, registry-type rules) that the schema alone
+doesn't capture.
+
+### Validation also runs in CI on every PR
+
+`.github/workflows/ci.yml` has a `validate-server-json` job that runs
+the same `mcp-publisher validate` command on every push and pull
+request. You can edit `server.json` without installing
+`mcp-publisher` locally and let CI be the safety net — but the
+feedback loop is obviously slower than running it yourself.
+
+### Ownership verification is version-bound
+
+Two markers prove this repo owns the published artifacts:
+
+- **PyPI**: the literal string `mcp-name: io.github.radiovisual/zoekt-mcp`
+  inside `README.md` (wrapped in an HTML comment at the bottom of the
+  file). PyPI renders `README.md` as the project description, and the
+  MCP Registry scans that page for this exact marker.
+- **OCI**: the `io.modelcontextprotocol.server.name` annotation on the
+  ghcr.io image manifest, set in the `publish-ghcr` job via
+  `docker/metadata-action`'s `annotations:` block.
+
+Both are tied to the *published artifact*, not to `main`. That means
+if you remove either marker and cut a new release, the next publish
+will fail ownership verification — even though main still looks fine
+and `mcp-publisher validate` still passes. Be careful about editing
+the README footer or the `publish-ghcr` labels/annotations block.
+
 ## What the workflow does NOT do
 
 Called out explicitly so nobody spends time looking for it:
