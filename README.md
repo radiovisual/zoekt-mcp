@@ -529,12 +529,13 @@ uv lock --upgrade                # refresh uv.lock
 
 ### Commit routine
 
-Linting is wired into the commit flow via a
+Linting and tests are wired into the git flow via a
 [pre-commit](https://pre-commit.com) hook so you never have to remember
-to run it by hand. After `uv sync`, install the hook once per clone:
+to run them by hand. After `uv sync`, install both hook types once per
+clone:
 
 ```bash
-uv run pre-commit install
+uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 From then on, every `git commit` runs:
@@ -549,11 +550,18 @@ From then on, every `git commit` runs:
   wide tables, and `MD033` so the troubleshooting `<details>` blocks
   are allowed.
 
+And every `git push` runs the offline pytest suites
+(`tests/test_client_unit.py` and `tests/test_server_shaping.py`) before
+the push leaves the machine, so a broken test can never hit the remote.
+Tests are scoped to `pre-push` rather than `pre-commit` to keep local
+commits snappy; the integration suite is excluded because it needs a
+running zoekt-webserver.
+
 The hooks shell out to `uv run`, so the tool versions pinned in
 `uv.lock` are what runs locally and in CI — no drift between
-environments. The same commands run on every push to `main` and every
-pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml),
-which also runs the offline unit tests.
+environments. The same linters **and** the same unit tests run on
+every push to `main` and every pull request via
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 To run everything manually (e.g. before opening a PR):
 
