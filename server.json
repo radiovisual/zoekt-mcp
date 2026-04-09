@@ -1,0 +1,45 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.radiovisual/zoekt-mcp",
+  "description": "Fast indexed code search for AI agents, powered by Sourcegraph Zoekt.",
+  "repository": {
+    "url": "https://github.com/radiovisual/zoekt-mcp",
+    "source": "github"
+  },
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "zoekt-mcp",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ZOEKT_URL",
+          "description": "Base URL of the zoekt-webserver backend (defaults to http://localhost:6070)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/radiovisual/zoekt-mcp:0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ZOEKT_URL",
+          "description": "Base URL of the zoekt-webserver backend (defaults to http://localhost:6070)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

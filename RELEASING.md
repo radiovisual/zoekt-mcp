@@ -131,12 +131,12 @@ which handles everything else.
 
 Watch the run at
 [Actions → Release](https://github.com/radiovisual/zoekt-mcp/actions/workflows/release.yml).
-Five jobs run in this order:
+Six jobs run in this order:
 
 ```text
 verify-version  ─┐
                  ├─▶  publish-pypi  ─┐
-build-wheel  ────┤                    ├─▶  create-release
+build-wheel  ────┤                    ├─▶  create-release ─▶ publish-mcp-registry
                  └─▶  publish-ghcr ──┘
 ```
 
@@ -157,15 +157,27 @@ build-wheel  ────┤                    ├─▶  create-release
    with tags derived via
    [`docker/metadata-action`](https://github.com/docker/metadata-action):
    `:0.2.0`, `:0.2`, `:0`, `:latest` for finals; only `:0.2.0-rc1`
-   (etc.) for prereleases.
+   (etc.) for prereleases. The image carries an
+   `io.modelcontextprotocol.server.name` annotation that the MCP
+   Registry uses to verify ownership of the `ghcr.io` artifact.
 5. **`create-release`** waits for **both** publish jobs to succeed,
    then creates the GitHub release with auto-generated notes
    (categorized by `.github/release.yml`) and attaches
    `deploy/docker-compose.yml` + `deploy/index.sh` as release assets.
+6. **`publish-mcp-registry`** runs last — only if everything above
+   went green — and publishes the server to the
+   [official MCP Registry](https://registry.modelcontextprotocol.io/)
+   under the `io.github.radiovisual/zoekt-mcp` namespace.
+   Authenticates via GitHub OIDC (no secrets required) and patches
+   `server.json` version fields from the tag on the fly, so the git
+   tag stays the single source of truth. Ownership is verified by
+   the `mcp-name:` marker in `README.md` (which PyPI exposes as the
+   project description) and the OCI annotation on the ghcr.io image.
 
-If PyPI or GHCR fails, no GitHub release is created. Re-run the
-failed job from the Actions UI once the underlying cause is fixed;
-the release job runs once both green.
+If PyPI or GHCR fails, no GitHub release is created and the MCP
+Registry publish never runs. Re-run the failed job from the Actions
+UI once the underlying cause is fixed; downstream jobs re-run once
+their dependencies go green.
 
 ## Verifying the release
 
@@ -183,6 +195,10 @@ docker run -i --rm ghcr.io/radiovisual/zoekt-mcp --help
 # GitHub release + assets
 gh release view v0.2.0
 gh release download v0.2.0 -p docker-compose.yml -p index.sh
+
+# MCP Registry
+curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=zoekt-mcp" \
+  | python3 -m json.tool
 ```
 
 ## What the workflow does NOT do
@@ -204,10 +220,12 @@ Called out explicitly so nobody spends time looking for it:
   `deploy/docker-compose.yml`. This is a deliberate layering choice
   shared by other MCP servers like `elastic/mcp-server-elasticsearch`,
   `github/github-mcp-server`, and most other first-party MCP servers.
-- **Does not submit to MCP catalogs.** Listing on the
-  [modelcontextprotocol.io](https://modelcontextprotocol.io) registry
-  and [Docker MCP Catalog](https://hub.docker.com/mcp) is a separate
-  follow-up once the first release is verified working end-to-end.
+- **Does not submit to the Docker MCP Catalog.** That's a separate
+  PR against [`docker/mcp-registry`](https://github.com/docker/mcp-registry)
+  and is explicitly out of scope — we list on
+  [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/)
+  (via `publish-mcp-registry`) and leave the Docker Hub catalog as an
+  optional future follow-up.
 
 ## Troubleshooting
 
@@ -236,6 +254,30 @@ One of the attached assets (`deploy/docker-compose.yml` or
 `deploy/index.sh`) is missing from the checkout. Either the file was
 moved or the checkout action is targeting the wrong ref. Usually
 means a file was renamed without updating `release.yml`.
+
+**`publish-mcp-registry` fails with "Authentication failed".**
+The `id-token: write` permission is missing from the job or the
+`io.github.radiovisual/*` namespace doesn't match the workflow's
+OIDC issuer (e.g. the repo was transferred). The namespace must be
+`io.github.<owner>/...` where `<owner>` is the current GitHub owner
+of this repository.
+
+**`publish-mcp-registry` fails with "Package validation failed" on
+the PyPI entry.** The MCP Registry scanned the PyPI project page and
+couldn't find the `mcp-name: io.github.radiovisual/zoekt-mcp`
+marker. Make sure that string (exactly, including the HTML comment
+delimiters) is present in `README.md` on the released commit and
+that `pyproject.toml` still sets `readme = "README.md"`. PyPI
+renders the file as the project description, which is what the
+registry scans.
+
+**`publish-mcp-registry` fails with "Package validation failed" on
+the OCI entry.** The pushed ghcr.io image doesn't carry the
+`io.modelcontextprotocol.server.name` annotation. Check that
+`publish-ghcr` passed both `labels:` AND `annotations:` to
+`docker/build-push-action` (OCI annotations live on the image
+manifest, separate from the labels on the image config) and that
+the metadata-action `annotations:` block is intact.
 
 **I need to yank a release.**
 On PyPI: `pip index versions zoekt-mcp` → find the version →

@@ -60,7 +60,8 @@ FROM python:3.12-slim-bookworm
 LABEL org.opencontainers.image.title="zoekt-mcp" \
       org.opencontainers.image.description="MCP server exposing Sourcegraph Zoekt code search to AI agents" \
       org.opencontainers.image.source="https://github.com/radiovisual/zoekt-mcp" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      io.modelcontextprotocol.server.name="io.github.radiovisual/zoekt-mcp"
 
 # Non-root runtime user. UID is fixed so bind mounts (if any) behave
 # predictably across hosts. No login shell, no home directory.

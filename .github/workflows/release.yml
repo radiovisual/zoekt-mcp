@@ -146,6 +146,9 @@ jobs:
             org.opencontainers.image.description=MCP server exposing Sourcegraph Zoekt code search to AI agents
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
+            io.modelcontextprotocol.server.name=io.github.radiovisual/zoekt-mcp
+          annotations: |
+            io.modelcontextprotocol.server.name=io.github.radiovisual/zoekt-mcp
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v5
@@ -156,6 +159,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -185,3 +189,55 @@ jobs:
           files: |
             deploy/docker-compose.yml
             deploy/index.sh
+
+  # -------------------------------------------------------------------
+  # 5. Publish the server to the official MCP Registry.
+  #
+  # Runs last — only if PyPI, GHCR, and the GitHub release all succeeded.
+  # Uses GitHub OIDC (no secrets) and the `io.github.radiovisual/*`
+  # namespace, which mcp-publisher verifies against the workflow's
+  # OIDC token. Version fields in server.json are patched on the fly
+  # from the tag so we have exactly one source of truth (the git tag).
+  # Ownership is verified via:
+  #   - a hidden `mcp-name:` marker in README.md (which is the PyPI
+  #     project description)
+  #   - an `io.modelcontextprotocol.server.name` OCI annotation on the
+  #     ghcr.io image (passed through docker/metadata-action above)
+  # -------------------------------------------------------------------
+  publish-mcp-registry:
+    name: Publish to MCP Registry
+    runs-on: ubuntu-latest
+    needs: create-release
+    permissions:
+      id-token: write   # required for github-oidc auth
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Patch server.json version fields from tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Setting server.json versions to ${VERSION}"
+          jq \
+            --arg v "${VERSION}" \
+            --arg oci "ghcr.io/radiovisual/zoekt-mcp:${VERSION}" \
+            '.version = $v
+             | .packages[0].version = $v
+             | .packages[1].identifier = $oci' \
+            server.json > server.json.tmp
+          mv server.json.tmp server.json
+          cat server.json
+
+      - name: Authenticate to MCP Registry (OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

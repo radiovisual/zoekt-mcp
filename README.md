@@ -809,3 +809,5 @@ elsewhere, add `-rpc` to its argv and restart.
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+<!-- mcp-name: io.github.radiovisual/zoekt-mcp -->
