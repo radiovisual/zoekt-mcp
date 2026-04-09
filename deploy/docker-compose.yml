@@ -53,6 +53,15 @@ services:
         git config --global user.email "zoekt-indexer@example.com"
         git config --global user.name "zoekt indexer"
 
+        # Full rebuild, not incremental: wipe any pre-existing shards so
+        # stale repos from previous runs (e.g. the in-repo test fixtures,
+        # or a directory the user removed from $ZOEKT_REPOS_DIR) don't
+        # leak into search results. The index volume is shared across
+        # runs, and zoekt-git-index only overwrites shards for repos it
+        # sees this time around — anything it doesn't see would otherwise
+        # persist forever.
+        rm -rf /data/* /data/.[!.]* /data/..?* 2>/dev/null || true
+
         indexed=0
         for src in /src/*; do
           [ -d "$${src}" ] || continue
