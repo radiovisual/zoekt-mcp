@@ -1,8 +1,7 @@
 # Releasing zoekt-mcp
 
 This document covers **how** to cut a release. For the design rationale
-(why declarative versioning, why multi-arch, why no auto-bump bot),
-see the PR that introduced this file.
+(why declarative versioning, why multi-arch, why no auto-bump bot).
 
 A release does four things, all wired to a single `v*` tag push:
 
@@ -190,9 +189,8 @@ gh release download v0.2.0 -p docker-compose.yml -p index.sh
 
 Called out explicitly so nobody spends time looking for it:
 
-- **Does not bump `pyproject.toml`.** The bump is a human-authored
-  commit that precedes the tag. This keeps the version declarative,
-  reviewable, and visible at a glance in the file that everything
+- **Does not bump `pyproject.toml`.** (unless you used the helper script)
+  The bump is a human-authored commit that precedes the tag. This keeps the version declarative, reviewable, and visible at a glance in the file that everything
   else reads.
 - **Does not commit back to `main`.** No bot commits, no "prepare next
   dev cycle" commits. `main` looks exactly like the release commit
@@ -204,7 +202,7 @@ Called out explicitly so nobody spends time looking for it:
 - **Does not lifecycle-manage the zoekt backend.** The image contains
   only the Python MCP server; users run the backend themselves via
   `deploy/docker-compose.yml`. This is a deliberate layering choice
-  shared by `elastic/mcp-server-elasticsearch`,
+  shared by other MCP servers like `elastic/mcp-server-elasticsearch`,
   `github/github-mcp-server`, and most other first-party MCP servers.
 - **Does not submit to MCP catalogs.** Listing on the
   [modelcontextprotocol.io](https://modelcontextprotocol.io) registry
