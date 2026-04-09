@@ -1,0 +1,187 @@
+name: Release
+
+# Fires only on annotated / lightweight tags that look like a version:
+# v0.1.0, v1.2.3-rc1, etc. Pushes to main do nothing here — CI runs in
+# ci.yml. See RELEASING.md for the full cut-a-release flow.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Only one release run per tag; newer pushes don't interrupt an
+# in-flight publish because we DO NOT want to cancel a half-finished
+# PyPI upload.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # -------------------------------------------------------------------
+  # 1. Fail fast if the tag and pyproject.toml disagree.
+  # -------------------------------------------------------------------
+  verify-version:
+    name: Verify tag matches pyproject.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract tag version and compare with pyproject.toml
+        id: extract
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PY_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag:        v${TAG_VERSION}"
+          echo "pyproject:  ${PY_VERSION}"
+          if [ "${TAG_VERSION}" != "${PY_VERSION}" ]; then
+            echo "::error::Git tag (v${TAG_VERSION}) does not match pyproject.toml version (${PY_VERSION}). Bump pyproject.toml before tagging."
+            exit 1
+          fi
+          echo "version=${PY_VERSION}" >> "${GITHUB_OUTPUT}"
+
+  # -------------------------------------------------------------------
+  # 2. Build the wheel + sdist once and hand them to downstream jobs.
+  # -------------------------------------------------------------------
+  build-wheel:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    needs: verify-version
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Build distribution artifacts
+        run: uv build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # -------------------------------------------------------------------
+  # 3a. Publish the wheel to PyPI via Trusted Publishing.
+  #
+  # No API tokens. Requires a matching "Trusted publisher" configured
+  # on PyPI (see RELEASING.md) and a GitHub "pypi" environment in repo
+  # settings. The environment also lets you add deploy-protection
+  # reviewers later without touching this workflow.
+  # -------------------------------------------------------------------
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build-wheel
+    environment:
+      name: pypi
+      url: https://pypi.org/project/zoekt-mcp/
+    permissions:
+      id-token: write   # required for OIDC / Trusted Publishing
+      contents: read
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # -------------------------------------------------------------------
+  # 3b. Build and push a multi-arch image to ghcr.io.
+  #
+  # Runs in parallel with publish-pypi — a PyPI outage must not block
+  # the image release and vice versa. The create-release job below
+  # waits for both.
+  # -------------------------------------------------------------------
+  publish-ghcr:
+    name: Publish image to ghcr.io
+    runs-on: ubuntu-latest
+    needs: verify-version
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=zoekt-mcp
+            org.opencontainers.image.description=MCP server exposing Sourcegraph Zoekt code search to AI agents
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # -------------------------------------------------------------------
+  # 4. Create the GitHub release only if both publishes succeeded.
+  #
+  # Attaches deploy/docker-compose.yml and deploy/index.sh as assets so
+  # users can `curl -LO` them directly from the release page without
+  # cloning the repo. Release notes are auto-generated from merged PRs
+  # and categorized via .github/release.yml.
+  # -------------------------------------------------------------------
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [publish-pypi, publish-ghcr]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            deploy/docker-compose.yml
+            deploy/index.sh

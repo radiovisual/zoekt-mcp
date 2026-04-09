@@ -1,0 +1,53 @@
+# Keep the Docker build context small and reproducible. Anything the
+# wheel build doesn't need should be excluded so edits elsewhere don't
+# bust the builder's layer cache.
+
+# Start strict and allow-list what the build actually needs.
+*
+
+# Files the builder stage copies.
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src
+!src/**
+
+# Never include these even if the allow-list catches them.
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# Git / IDE / editor state — never belongs in an image.
+.git
+.gitignore
+.github
+.idea
+.vscode
+.claude
+*.swp
+*.swo
+
+# Local build outputs.
+dist
+build
+.venv
+venv
+env
+
+# Dev-only trees that aren't needed to build or run the server.
+tests
+examples
+deploy
+scripts
+
+# Docs that don't feed the build.
+RELEASING.md
+.pre-commit-config.yaml
+
+# OS cruft.
+.DS_Store
+Thumbs.db
