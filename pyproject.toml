@@ -60,3 +60,7 @@ plugins.md013.enabled = false
 # them) trips MD046 / MD032 in ways that fight readable formatting.
 # We keep the core rules on and only relax the ones that fight us.
 plugins.md046.enabled = false
+# We use raw <details>/<summary> for the Troubleshooting Q&A accordions
+# in README.md, which CommonMark renderers (GitHub, etc.) display as
+# collapsible sections. MD033 forbids inline HTML by default; allow it.
+plugins.md033.enabled = false

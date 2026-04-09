@@ -593,6 +593,87 @@ zoekt-mcp/
     └── express-app/            # Express verification corpus
 ```
 
+## Troubleshooting
+
+Common indexing pitfalls, in Q&A form. Click any question to expand
+the answer.
+
+<details>
+<summary><b>Q: <code>search_code</code> returns 0 hits for a string I know is in my project. What's wrong?</b></summary>
+
+Nine times out of ten the index doesn't actually contain your code —
+zoekt is searching a different (or stale) corpus. The MCP server
+itself doesn't filter or rewrite queries; whatever you send goes
+straight to `/api/search`, so 0 hits means 0 hits *in the index*.
+
+Diagnose it in three steps:
+
+1. Ask the agent to call `list_repos` (or `curl -s -XPOST -d '{"Q":"repo:."}' http://localhost:6070/api/list`). This is the source of truth for what zoekt can see.
+2. If your project isn't in the list, the indexer was pointed somewhere else. Common culprits:
+   - Someone ran `./tests/fixtures/up.sh`, which sets `ZOEKT_REPOS_DIR=../examples` and indexes only `examples/express-app` and `examples/flask-app`.
+   - `deploy/.env` is missing or has the wrong `ZOEKT_REPOS_DIR`, so `docker compose up` fell back to the empty `deploy/repos/` and either failed or indexed leftover content from a previous run.
+   - The indexer wipes `/data/*` on every run (see `deploy/docker-compose.yml`), so a previous good run does **not** persist alongside a later one — the most recent indexer invocation is the only thing the webserver can see.
+3. Re-run the indexer against the right directory:
+
+    ```bash
+    ZOEKT_REPOS_DIR=/absolute/path/to/parent-of-your-repo \
+      docker compose -f deploy/docker-compose.yml up -d --force-recreate zoekt-indexer
+    ```
+
+    `ZOEKT_REPOS_DIR` must be a **parent** directory; every top-level subdirectory under it becomes one repo. Re-run `list_repos` after the indexer exits to confirm.
+
+</details>
+
+<details>
+<summary><b>Q: The indexer exits with <code>WARNING: no repositories were indexed</code>. Now what?</b></summary>
+
+The directory pointed at by `ZOEKT_REPOS_DIR` (or `deploy/repos/` by
+default) has no top-level subdirectories the indexer could turn into
+repos. Either:
+
+- Drop at least one directory (or `git clone`) into `deploy/repos/`, or
+- Set `ZOEKT_REPOS_DIR` to a parent that already contains your project subdirectories, e.g. `echo "ZOEKT_REPOS_DIR=$HOME/code" > deploy/.env`, then `docker compose -f deploy/docker-compose.yml up -d`.
+
+Loose files at the top of `ZOEKT_REPOS_DIR` are ignored — the loop
+in the compose file only iterates over directories.
+
+</details>
+
+<details>
+<summary><b>Q: <code>list_repos</code> shows <code>express-app</code> and <code>flask-app</code> but not my code.</b></summary>
+
+Those are the in-repo verification fixtures under `examples/`. They
+end up in your index when something — usually `tests/fixtures/up.sh`
+— ran the indexer with `ZOEKT_REPOS_DIR=../examples`. Re-index
+against your real project directory (see the first Q&A above) and
+they'll be replaced; the indexer wipes `/data/` at the start of every
+run, so there's no need to clean up separately.
+
+</details>
+
+<details>
+<summary><b>Q: I edited a file but search results still show the old content / line numbers.</b></summary>
+
+The index is a snapshot, not a live view. zoekt only sees what was
+in `ZOEKT_REPOS_DIR` the last time the indexer ran. Trigger a refresh
+with `./deploy/index.sh`, or set up one of the four automation
+recipes in [Keeping the index fresh](#keeping-the-index-fresh) so it
+happens on its own. Re-indexing is fast (seconds, even for large
+repos) and runs entirely in Docker — no LLM calls, zero token cost.
+
+</details>
+
+<details>
+<summary><b>Q: <code>POST /api/search</code> returns HTML instead of JSON.</b></summary>
+
+The webserver was started without `-rpc`, so `/api/*` falls through
+to the HTML search handler. The bundled `deploy/docker-compose.yml`
+already passes `-rpc` (see the `command:` block under
+`zoekt-webserver`); if you're running your own zoekt-webserver
+elsewhere, add `-rpc` to its argv and restart.
+
+</details>
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
