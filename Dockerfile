@@ -5,8 +5,9 @@
 # This image ships ONLY the Python MCP server — a thin, versioned client
 # that speaks zoekt-webserver's HTTP JSON API over stdio MCP. It does
 # NOT bundle the zoekt backend (zoekt-webserver / zoekt-indexer); users
-# run that themselves via deploy/docker-compose.yml and point this
-# container at it with the ZOEKT_URL environment variable.
+# run that themselves via the docker-compose.yml attached to every
+# GitHub release, and point this container at it with the ZOEKT_URL
+# environment variable.
 #
 # Build:
 #     docker build -t zoekt-mcp .

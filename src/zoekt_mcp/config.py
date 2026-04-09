@@ -2,7 +2,7 @@
 
 Config comes from (in order of precedence):
 
-1. Command-line flags (``--backend``, ``--timeout``).
+1. Command-line flags (``--zoekt-url``, ``--timeout``).
 2. Environment variables (``ZOEKT_URL``, ``ZOEKT_TIMEOUT``).
 3. Hard-coded defaults.
 """
@@ -29,7 +29,8 @@ def load_config(argv: list[str] | None = None) -> ZoektConfig:
         description="MCP server exposing Sourcegraph Zoekt code search.",
     )
     parser.add_argument(
-        "--backend",
+        "--zoekt-url",
+        dest="zoekt_url",
         default=os.environ.get("ZOEKT_URL", DEFAULT_BACKEND_URL),
         help=(
             "Base URL of a running zoekt-webserver. "
@@ -44,4 +45,4 @@ def load_config(argv: list[str] | None = None) -> ZoektConfig:
     )
 
     args = parser.parse_args(argv)
-    return ZoektConfig(backend_url=args.backend, timeout=args.timeout)
+    return ZoektConfig(backend_url=args.zoekt_url, timeout=args.timeout)

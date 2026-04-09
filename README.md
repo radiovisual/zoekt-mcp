@@ -1,4 +1,9 @@
-# zoekt-mcp [![CI](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml)
+# zoekt-mcp
+
+[![CI](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/zoekt-mcp.svg)](https://pypi.org/project/zoekt-mcp/)
+[![ghcr.io](https://img.shields.io/badge/ghcr.io-zoekt--mcp-blue)](https://github.com/radiovisual/zoekt-mcp/pkgs/container/zoekt-mcp)
+[![License](https://img.shields.io/github/license/radiovisual/zoekt-mcp.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that exposes
 [Sourcegraph Zoekt](https://github.com/sourcegraph/zoekt) code search to any
@@ -8,9 +13,15 @@ over your repositories regardless of the language you're working in.
 
 - **MCP server:** Python, built on
   [FastMCP](https://github.com/modelcontextprotocol/python-sdk), runs over
-  stdio so clients can spawn it as a subprocess.
-- **Backend:** a `zoekt-webserver` you bring up via the bundled Docker
-  Compose stack (or point the server at any existing zoekt-webserver).
+  stdio so clients can spawn it as a subprocess. Published to
+  [PyPI](https://pypi.org/project/zoekt-mcp/) and
+  [ghcr.io](https://github.com/radiovisual/zoekt-mcp/pkgs/container/zoekt-mcp)
+  so **no clone is required to use it**.
+- **Backend:** a `zoekt-webserver` you run yourself via the Docker
+  Compose file attached to every
+  [GitHub release](https://github.com/radiovisual/zoekt-mcp/releases/latest) —
+  or point the MCP server at any existing zoekt-webserver you have
+  lying around.
 - **Tools exposed:** `search_code`, `list_repos`, `get_file`.
 
 ## Architecture
@@ -63,14 +74,19 @@ sequenceDiagram
 
 ## Quickstart
 
+Getting from "nothing installed" to "Claude can search my code" is
+three steps: install the MCP server, run the backend, wire it into
+your client. No git clone required in any of them.
+
 ### Prerequisites
 
-- **Docker** — runs the zoekt-webserver backend and the one-shot
-  indexer. Any recent Docker Desktop or engine with Compose v2 works.
-- **[uv](https://docs.astral.sh/uv/)** must be installed and on your
-  `PATH`. MCP clients spawn the Python server via `uvx`, so `which uv`
-  needs to resolve in whatever shell your client launches processes in.
-  Install it once per machine — any of these works:
+You need exactly one of these to run the MCP server, plus Docker for
+the backend:
+
+- **[uv](https://docs.astral.sh/uv/) on your `PATH`** — for the
+  `uvx zoekt-mcp` install path. MCP clients spawn the server via
+  `uvx`, so `which uv` must resolve in whatever shell your client
+  launches processes in. Install once per machine:
 
   ```bash
   # Official installer (macOS / Linux)
@@ -79,45 +95,47 @@ sequenceDiagram
   # Homebrew
   brew install uv
 
-  # pipx (if you already use it)
+  # pipx
   pipx install uv
   ```
 
   The installer drops `uv` and `uvx` into `~/.local/bin/` (Linux/macOS)
-  or `%USERPROFILE%\.local\bin\` (Windows). Make sure that directory is
-  on your `PATH`; on Ubuntu it usually is by default. Verify with
-  `uv --version`.
+  or `%USERPROFILE%\.local\bin\` (Windows). Verify with `uv --version`.
 
-You do **not** need to create a venv or `pip install` anything to
-*use* zoekt-mcp — `uvx` handles that transparently on first invocation.
-A venv is only needed if you want to hack on the server itself; see
-[Development setup](#development-setup) below.
+- **…or Docker** — for the `docker run ghcr.io/radiovisual/zoekt-mcp`
+  install path. Any recent Docker Desktop or engine works. You need
+  Docker anyway for the backend, so this path saves you from
+  installing `uv` if you don't already have it.
 
-### 1. Clone this repo
+And for the backend:
 
-You need a clone for the Docker Compose file and the helper scripts.
-The Python server itself runs from the clone via `uvx --from` — no
-install step required.
+- **Docker with Compose v2** — runs `zoekt-webserver` and the
+  one-shot indexer via the compose file attached to every
+  [release](https://github.com/radiovisual/zoekt-mcp/releases/latest).
 
-```bash
-git clone https://github.com/radiovisual/zoekt-mcp
-cd zoekt-mcp
-```
+### 1. Start the backend (once per machine)
 
-### 2. Point the indexer at your code
-
-Tell the backend where your code lives by setting `ZOEKT_REPOS_DIR`
-to any parent directory on your machine. **Every top-level
-subdirectory of that path becomes one searchable repo in zoekt.**
-
-The easiest way is a one-line `.env` file in `deploy/` — docker
-compose picks it up automatically:
+The zoekt backend is a regular Docker Compose stack you run
+yourself — zoekt-mcp does **not** lifecycle-manage it. Grab the
+compose file and helper script from the latest GitHub release and
+bring them up against whatever directory holds your code:
 
 ```bash
-echo "ZOEKT_REPOS_DIR=/home/you/code" > deploy/.env
+# Fetch the two files you need from the latest release.
+mkdir -p ~/.zoekt-mcp && cd ~/.zoekt-mcp
+curl -LO https://github.com/radiovisual/zoekt-mcp/releases/latest/download/docker-compose.yml
+curl -LO https://github.com/radiovisual/zoekt-mcp/releases/latest/download/index.sh
+chmod +x index.sh
+
+# Point the indexer at any parent directory on your machine.
+# Every top-level subdirectory becomes one searchable repo.
+echo "ZOEKT_REPOS_DIR=/home/you/code" > .env
+
+# Bring up zoekt-webserver + the one-shot indexer.
+docker compose up -d
 ```
 
-So if your projects directory looks like this:
+So if `/home/you/code` looks like this:
 
 ```text
 ~/code/
@@ -132,21 +150,6 @@ everything at once. See
 [Indexing multiple codebases](#indexing-multiple-codebases) below for
 more on the one-server-many-repos model.
 
-> On macOS / Windows Docker Desktop, the path you pick must be under
-> an allowed file-sharing root (check Docker Desktop → Settings →
-> Resources → File Sharing). On Linux there's no such restriction.
-
-### 3. Bring up the backend
-
-```bash
-docker compose -f deploy/docker-compose.yml up -d
-```
-
-The `zoekt-indexer` one-shot reads everything under `ZOEKT_REPOS_DIR`
-and writes shards to a named volume. Then `zoekt-webserver` serves
-the HTTP JSON API on `localhost:6070`, reading from the same volume.
-See [`deploy/README.md`](deploy/README.md) for details.
-
 Sanity check:
 
 ```bash
@@ -157,23 +160,28 @@ curl -s -XPOST -d '{"Q":"repo:."}' http://localhost:6070/api/list \
 You should see each subdirectory of `ZOEKT_REPOS_DIR` listed as a
 zoekt repo.
 
+> On macOS / Windows Docker Desktop, the path you pick must be under
+> an allowed file-sharing root (check Docker Desktop → Settings →
+> Resources → File Sharing). On Linux there's no such restriction.
+>
 > **Just want to try it without touching your real code directory?**
-> There's a tiny Flask + Express verification corpus under
-> `examples/` plus a fixture helper that spins up the stack against
-> it:
->
-> ```bash
-> ./tests/fixtures/up.sh
-> ```
->
-> See the "Automated tests" section below for details.
+> Clone the repo and use the in-tree test fixture:
+> `./tests/fixtures/up.sh` — see [Development](#development) at the
+> bottom of this file.
 
-### 4. Wire it into your MCP client
+### 2. Wire the MCP server into your client
 
-`uvx` will build and run the server directly from your clone — no
-explicit install step. Point your MCP client at it:
+Two install paths — pick whichever matches your existing tooling.
+Both end up running the same versioned server binary; the only
+difference is how it's launched.
 
-#### Claude Code (`~/.claude.json`)
+#### Path A — `uvx` (recommended if you already have uv)
+
+`uvx` downloads the latest `zoekt-mcp` from PyPI on first
+invocation, caches it, and spawns it. No permanent install, no venv
+to manage.
+
+**Claude Code (`~/.claude.json`):**
 
 ```json
 {
@@ -181,43 +189,102 @@ explicit install step. Point your MCP client at it:
     "zoekt": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+      "args": ["zoekt-mcp"],
       "env": { "ZOEKT_URL": "http://localhost:6070" }
     }
   }
 }
 ```
 
-Or with the CLI:
+Or via the `claude` CLI:
 
 ```bash
- claude mcp add zoekt \
+claude mcp add zoekt \
     --env ZOEKT_URL=http://localhost:6070 \
-    -- uvx --from /absolute/path/to/zoekt-mcp \
-    zoekt-mcp
+    -- uvx zoekt-mcp
 ```
 
-#### Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS)
+**Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):**
 
 ```json
 {
   "mcpServers": {
     "zoekt": {
       "command": "uvx",
-      "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+      "args": ["zoekt-mcp"],
       "env": { "ZOEKT_URL": "http://localhost:6070" }
     }
   }
 }
 ```
 
-Restart the client and the three tools (`search_code`, `list_repos`,
-`get_file`) should appear.
+**Cursor (`~/.cursor/mcp.json` or `.cursor/mcp.json` in a project):**
 
-> Once zoekt-mcp is published to PyPI, the `--from` argument goes
-> away and the config collapses to `"args": ["zoekt-mcp"]` — no
-> clone required for the Python side. The backend still needs the
-> compose file from this repo.
+```json
+{
+  "mcpServers": {
+    "zoekt": {
+      "command": "uvx",
+      "args": ["zoekt-mcp"],
+      "env": { "ZOEKT_URL": "http://localhost:6070" }
+    }
+  }
+}
+```
+
+To pin a specific version instead of always using the latest:
+
+```json
+"args": ["zoekt-mcp==0.1.0"]
+```
+
+#### Path B — Docker image (no Python tooling required)
+
+If you already have Docker running for the backend and would rather
+not install `uv`, use the container image instead. MCP clients
+spawn it over stdio exactly like the `uvx` path.
+
+**Claude Code / Claude Desktop / Cursor:**
+
+```json
+{
+  "mcpServers": {
+    "zoekt": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "--network=host",
+        "-e", "ZOEKT_URL=http://localhost:6070",
+        "ghcr.io/radiovisual/zoekt-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+On Docker Desktop (macOS/Windows) the host isn't reachable via
+`localhost` from inside a container. Drop `--network=host` and use
+`host.docker.internal` instead:
+
+```json
+"args": [
+  "run", "-i", "--rm",
+  "-e", "ZOEKT_URL=http://host.docker.internal:6070",
+  "ghcr.io/radiovisual/zoekt-mcp:latest"
+]
+```
+
+To pin a specific version, replace `:latest` with the semver tag
+(e.g. `:0.1.0`). The image is multi-arch (`linux/amd64` +
+`linux/arm64`), so it works on Apple Silicon and ARM Linux hosts
+without extra flags.
+
+### 3. Restart the client
+
+Restart Claude Code / Claude Desktop / Cursor and the three tools
+(`search_code`, `list_repos`, `get_file`) should appear. Try
+something like "where is `getVideoId` defined?" and watch it call
+`search_code("sym:getVideoId")`.
 
 ## Indexing multiple codebases
 
@@ -237,8 +304,10 @@ repos searchable.
 mkdir -p ~/.zoekt-root
 ln -s ~/work/project-a       ~/.zoekt-root/project-a
 ln -s ~/personal/side-thing  ~/.zoekt-root/side-thing
-echo "ZOEKT_REPOS_DIR=$HOME/.zoekt-root" > deploy/.env
-docker compose -f deploy/docker-compose.yml up -d
+
+cd ~/.zoekt-mcp
+echo "ZOEKT_REPOS_DIR=$HOME/.zoekt-root" > .env
+docker compose up -d
 ```
 
 > Docker has to follow the symlinks when it resolves the bind mount,
@@ -258,39 +327,39 @@ with many subdirectories is the right tool for that.
 
 If you genuinely want two instances:
 
-1. Copy `deploy/docker-compose.yml` to a second file, e.g.
-   `deploy/docker-compose.personal.yml`.
+1. Copy `~/.zoekt-mcp/docker-compose.yml` to a second file, e.g.
+   `~/.zoekt-mcp/docker-compose.personal.yml`.
 2. In the copy, change:
    - the compose project `name:` (e.g. `zoekt-mcp-personal`)
    - the host port mapping (e.g. `6071:6070`)
    - the named volume (e.g. `zoekt-mcp-personal-index`)
    - the container names (e.g. `zoekt-mcp-personal-webserver`)
 3. Give the second stack its own env file, e.g.
-   `deploy/.env.personal`, pointing `ZOEKT_REPOS_DIR` at a different
-   directory.
+   `~/.zoekt-mcp/.env.personal`, pointing `ZOEKT_REPOS_DIR` at a
+   different directory.
 4. Bring each stack up with its own compose file and env file:
 
    ```bash
-   docker compose -f deploy/docker-compose.yml up -d
-   docker compose -f deploy/docker-compose.personal.yml \
-     --env-file deploy/.env.personal up -d
+   cd ~/.zoekt-mcp
+   docker compose up -d
+   docker compose -f docker-compose.personal.yml \
+     --env-file .env.personal up -d
    ```
 
-5. Wire both into Claude Code as distinct MCP servers — they can
-   point at the same `zoekt-mcp` clone, just with different
-   `ZOEKT_URL` values:
+5. Wire both into your MCP client as distinct servers — same
+   `zoekt-mcp` binary, different `ZOEKT_URL` values:
 
    ```json
    {
      "mcpServers": {
        "zoekt-work": {
          "command": "uvx",
-         "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+         "args": ["zoekt-mcp"],
          "env": { "ZOEKT_URL": "http://localhost:6070" }
        },
        "zoekt-personal": {
          "command": "uvx",
-         "args": ["--from", "/absolute/path/to/zoekt-mcp", "zoekt-mcp"],
+         "args": ["zoekt-mcp"],
          "env": { "ZOEKT_URL": "http://localhost:6071" }
        }
      }
@@ -305,28 +374,31 @@ For most users, **one server with a well-populated `ZOEKT_REPOS_DIR`
 is all you need.** Don't reach for multi-server unless you have a
 concrete reason to isolate.
 
-### Advanced: staging code under `deploy/repos/`
+### Advanced: staging code under a dedicated repos directory
 
 As an alternative to pointing `ZOEKT_REPOS_DIR` at your real code,
-you can drop clones or directories directly into `deploy/repos/`
-(gitignored) and leave the default mount path alone:
+you can create a dedicated staging directory and drop clones or
+directories into it. Useful when you can't expose your real code
+directory to Docker (e.g. corporate file-sharing restrictions on
+Docker Desktop), or for one-off experiments with a repo you don't
+have locally:
 
 ```bash
-mkdir -p deploy/repos
-git clone https://github.com/myorg/myrepo deploy/repos/myrepo
-docker compose -f deploy/docker-compose.yml up -d
+mkdir -p ~/.zoekt-mcp/repos
+git clone https://github.com/myorg/myrepo ~/.zoekt-mcp/repos/myrepo
+
+cd ~/.zoekt-mcp
+echo "ZOEKT_REPOS_DIR=$HOME/.zoekt-mcp/repos" > .env
+docker compose up -d
 ```
 
-This is useful when you can't expose your real code directory to
-Docker (e.g. corporate file-sharing restrictions on Docker Desktop),
-or for one-off experiments with a repo you don't have locally.
-
 The trade-off is a **freshness trap**: you now have two copies of
-every project — the one you actually edit, and the copy under
-`deploy/repos/`. Re-running the indexer re-reads the stale copy, so
-you'd need to `git pull` (or `cp -r` your edits) inside
-`deploy/repos/myrepo/` before each re-index. Prefer the main
-`ZOEKT_REPOS_DIR` workflow unless you have a specific reason not to.
+every project — the one you actually edit, and the staged copy.
+Re-running the indexer re-reads the staged copy, so you'd need to
+`git pull` (or `cp -r` your edits) inside
+`~/.zoekt-mcp/repos/myrepo/` before each re-index. Prefer pointing
+`ZOEKT_REPOS_DIR` at your live code directory unless you have a
+specific reason not to.
 
 ## Tool surface
 
@@ -387,9 +459,9 @@ tokens. You just need to decide **how** you want to trigger it.
 Because the main quickstart already points `ZOEKT_REPOS_DIR` at your
 live code directory, every re-index automatically reflects your
 latest edits — no copy step to keep in sync. (If you're on the
-[advanced staging workflow](#advanced-staging-code-under-deployrepos)
-instead, update the clones under `deploy/repos/` before you trigger
-a re-index, otherwise zoekt just re-reads the stale copies.)
+[advanced staging workflow](#advanced-staging-code-under-a-dedicated-repos-directory)
+instead, update the clones under `~/.zoekt-mcp/repos/` before you
+trigger a re-index, otherwise zoekt just re-reads the stale copies.)
 
 ### Recipes for triggering the re-index
 
@@ -398,13 +470,13 @@ window involvement. Pick whichever matches how you work.
 
 #### 1. Manual re-index
 
-Run [`deploy/index.sh`](deploy/index.sh) whenever you know you've
-made significant changes. The script runs just the indexer container
-against the current `ZOEKT_REPOS_DIR` without bouncing the webserver,
-so search stays available throughout.
+Run `~/.zoekt-mcp/index.sh` whenever you know you've made significant
+changes. The script runs just the indexer container against the
+current `ZOEKT_REPOS_DIR` without bouncing the webserver, so search
+stays available throughout.
 
 ```bash
-./deploy/index.sh
+~/.zoekt-mcp/index.sh
 ```
 
 *Good when:* you only use Claude for occasional sessions and don't
@@ -417,7 +489,7 @@ between ticks.
 
 ```cron
 # Re-index every 15 minutes
-*/15 * * * * cd /path/to/your/project/zoekt-mcp && ./deploy/index.sh >/dev/null 2>&1
+*/15 * * * * cd ~/.zoekt-mcp && ./index.sh >/dev/null 2>&1
 ```
 
 *Good when:* you work on code most days and want fresh-ish search
@@ -432,14 +504,14 @@ or `fswatch` (macOS). Catches every edit, idle otherwise.
 # Linux: one-liner, run it in a tmux pane or as a systemd --user service
 while inotifywait -r -e modify,create,delete,move \
     --exclude '\.git/|node_modules/|__pycache__/' \
-    /path/to/your/project 2>/dev/null; do
-  ./deploy/index.sh
+    /path/to/your/code 2>/dev/null; do
+  ~/.zoekt-mcp/index.sh
 done
 ```
 
 ```bash
 # macOS equivalent with fswatch (brew install fswatch)
-fswatch -o /Users/you/code | xargs -n1 -I{} ./deploy/index.sh
+fswatch -o /Users/you/code | xargs -n1 -I{} ~/.zoekt-mcp/index.sh
 ```
 
 *Good when:* you want "search is always current, no matter when I
@@ -461,7 +533,7 @@ staleness.
   "hooks": {
     "SessionStart": [
       {
-        "command": "/path/to/your/project/zoekt-mcp/deploy/index.sh"
+        "command": "$HOME/.zoekt-mcp/index.sh"
       }
     ]
   }
@@ -501,10 +573,16 @@ The Inspector opens a browser UI on `http://localhost:6274`. Under **Tools**
 Under **Tools → list_repos**, an empty filter should return both
 `flask-app` and `express-app`.
 
-## Development setup
+## Development
 
-If you want to hack on the server itself (rather than just use it via
-`uvx`), clone the repo and let `uv` manage the venv for you:
+This section is for hacking on zoekt-mcp itself. If you just want to
+*use* it, the [Quickstart](#quickstart) above covers everything — no
+clone required. Only come here if you want to change the Python
+server, run the full test suite, or cut a release.
+
+### Setup
+
+Clone the repo and let `uv` manage the venv for you:
 
 ```bash
 git clone https://github.com/radiovisual/zoekt-mcp
@@ -514,8 +592,9 @@ uv sync
 
 `uv sync` creates `.venv/`, resolves everything against `uv.lock`, and
 installs all runtime + dev dependencies. The dev group (`pytest`,
-`pytest-asyncio`, `respx`) is installed by default; pass
-`uv sync --no-dev` for a runtime-only install.
+`pytest-asyncio`, `respx`, `ruff`, `pre-commit`, `pymarkdownlnt`) is
+installed by default; pass `uv sync --no-dev` for a runtime-only
+install.
 
 Common dev commands:
 
@@ -526,6 +605,21 @@ uv add <package>                 # add a new runtime dep
 uv add --dev <package>           # add a new dev dep
 uv lock --upgrade                # refresh uv.lock
 ```
+
+To run zoekt-mcp from your local clone against a running backend
+(e.g. while iterating on the server code):
+
+```bash
+uv run zoekt-mcp --zoekt-url http://localhost:6070
+```
+
+### Releasing
+
+Releases are fully automated — a tag push triggers the pipeline
+that publishes to PyPI and ghcr.io and cuts a GitHub release with
+the compose file attached. See [`RELEASING.md`](RELEASING.md) for
+the cut-a-release flow (helper script + manual paths) and the
+one-time PyPI/GHCR setup required before the first tag.
 
 ### Commit routine
 
@@ -599,8 +693,14 @@ automatically when `ZOEKT_URL` is unreachable, so a plain
 
 | Setting | Env var | Flag | Default |
 |---------|---------|------|---------|
-| Zoekt backend URL | `ZOEKT_URL` | `--backend` | `http://localhost:6070` |
+| Zoekt backend URL | `ZOEKT_URL` | `--zoekt-url` | `http://localhost:6070` |
 | HTTP timeout (s) | `ZOEKT_TIMEOUT` | `--timeout` | `30` |
+
+The env var and the flag are equivalent — pick whichever fits your
+MCP client's config shape better. Most clients set environment
+variables via an `"env"` block in their JSON config, which is why
+the `uvx` and Docker snippets above use `ZOEKT_URL` rather than
+`--zoekt-url`.
 
 ## Repo layout
 
@@ -636,14 +736,15 @@ Diagnose it in three steps:
 
 1. Ask the agent to call `list_repos` (or `curl -s -XPOST -d '{"Q":"repo:."}' http://localhost:6070/api/list`). This is the source of truth for what zoekt can see.
 2. If your project isn't in the list, the indexer was pointed somewhere else. Common culprits:
-   - Someone ran `./tests/fixtures/up.sh`, which sets `ZOEKT_REPOS_DIR=../examples` and indexes only `examples/express-app` and `examples/flask-app`.
-   - `deploy/.env` is missing or has the wrong `ZOEKT_REPOS_DIR`, so `docker compose up` fell back to the empty `deploy/repos/` and either failed or indexed leftover content from a previous run.
-   - The indexer wipes `/data/*` on every run (see `deploy/docker-compose.yml`), so a previous good run does **not** persist alongside a later one — the most recent indexer invocation is the only thing the webserver can see.
+   - `~/.zoekt-mcp/.env` is missing or has the wrong `ZOEKT_REPOS_DIR`, so `docker compose up` indexed an empty or unexpected directory.
+   - Someone ran `./tests/fixtures/up.sh` from a dev clone, which sets `ZOEKT_REPOS_DIR=../examples` and indexes only `examples/express-app` and `examples/flask-app`.
+   - The indexer wipes `/data/*` on every run, so a previous good run does **not** persist alongside a later one — the most recent indexer invocation is the only thing the webserver can see.
 3. Re-run the indexer against the right directory:
 
     ```bash
-    ZOEKT_REPOS_DIR=/absolute/path/to/parent-of-your-repo \
-      docker compose -f deploy/docker-compose.yml up -d --force-recreate zoekt-indexer
+    cd ~/.zoekt-mcp
+    echo "ZOEKT_REPOS_DIR=/absolute/path/to/parent-of-your-repo" > .env
+    docker compose up -d --force-recreate zoekt-indexer
     ```
 
     `ZOEKT_REPOS_DIR` must be a **parent** directory; every top-level subdirectory under it becomes one repo. Re-run `list_repos` after the indexer exits to confirm.
@@ -653,12 +754,16 @@ Diagnose it in three steps:
 <details>
 <summary><b>Q: The indexer exits with <code>WARNING: no repositories were indexed</code>. Now what?</b></summary>
 
-The directory pointed at by `ZOEKT_REPOS_DIR` (or `deploy/repos/` by
-default) has no top-level subdirectories the indexer could turn into
-repos. Either:
+The directory pointed at by `ZOEKT_REPOS_DIR` has no top-level
+subdirectories the indexer could turn into repos. Set
+`ZOEKT_REPOS_DIR` to a parent that already contains your project
+subdirectories:
 
-- Drop at least one directory (or `git clone`) into `deploy/repos/`, or
-- Set `ZOEKT_REPOS_DIR` to a parent that already contains your project subdirectories, e.g. `echo "ZOEKT_REPOS_DIR=$HOME/code" > deploy/.env`, then `docker compose -f deploy/docker-compose.yml up -d`.
+```bash
+cd ~/.zoekt-mcp
+echo "ZOEKT_REPOS_DIR=$HOME/code" > .env
+docker compose up -d
+```
 
 Loose files at the top of `ZOEKT_REPOS_DIR` are ignored — the loop
 in the compose file only iterates over directories.
@@ -668,12 +773,13 @@ in the compose file only iterates over directories.
 <details>
 <summary><b>Q: <code>list_repos</code> shows <code>express-app</code> and <code>flask-app</code> but not my code.</b></summary>
 
-Those are the in-repo verification fixtures under `examples/`. They
-end up in your index when something — usually `tests/fixtures/up.sh`
-— ran the indexer with `ZOEKT_REPOS_DIR=../examples`. Re-index
-against your real project directory (see the first Q&A above) and
-they'll be replaced; the indexer wipes `/data/` at the start of every
-run, so there's no need to clean up separately.
+Those are the in-repo verification fixtures under `examples/` in a
+dev clone. They end up in your index when something — usually
+`tests/fixtures/up.sh` from a local clone — ran the indexer with
+`ZOEKT_REPOS_DIR=../examples`. Re-index against your real project
+directory (see the first Q&A above) and they'll be replaced; the
+indexer wipes `/data/` at the start of every run, so there's no need
+to clean up separately.
 
 </details>
 
@@ -682,7 +788,7 @@ run, so there's no need to clean up separately.
 
 The index is a snapshot, not a live view. zoekt only sees what was
 in `ZOEKT_REPOS_DIR` the last time the indexer ran. Trigger a refresh
-with `./deploy/index.sh`, or set up one of the four automation
+with `~/.zoekt-mcp/index.sh`, or set up one of the four automation
 recipes in [Keeping the index fresh](#keeping-the-index-fresh) so it
 happens on its own. Re-indexing is fast (seconds, even for large
 repos) and runs entirely in Docker — no LLM calls, zero token cost.
@@ -693,7 +799,7 @@ repos) and runs entirely in Docker — no LLM calls, zero token cost.
 <summary><b>Q: <code>POST /api/search</code> returns HTML instead of JSON.</b></summary>
 
 The webserver was started without `-rpc`, so `/api/*` falls through
-to the HTML search handler. The bundled `deploy/docker-compose.yml`
+to the HTML search handler. The release-bundled `docker-compose.yml`
 already passes `-rpc` (see the `command:` block under
 `zoekt-webserver`); if you're running your own zoekt-webserver
 elsewhere, add `-rpc` to its argv and restart.
