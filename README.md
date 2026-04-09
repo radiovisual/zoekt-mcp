@@ -191,7 +191,10 @@ explicit install step. Point your MCP client at it:
 Or with the CLI:
 
 ```bash
-claude mcp add zoekt uvx --from /absolute/path/to/zoekt-mcp zoekt-mcp
+ claude mcp add zoekt \
+    --env ZOEKT_URL=http://localhost:6070 \
+    -- uvx --from /absolute/path/to/zoekt-mcp \
+    zoekt-mcp
 ```
 
 #### Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS)
