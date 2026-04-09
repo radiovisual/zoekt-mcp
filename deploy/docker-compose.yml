@@ -40,6 +40,15 @@ name: zoekt-mcp-backend
 
 services:
   zoekt-indexer:
+    # Upstream Sourcegraph image. Ships universal-ctags 6.1.0 at
+    # /usr/local/bin/universal-ctags — zoekt-git-index invokes it
+    # automatically to extract symbol definitions (functions, classes,
+    # constants). Without ctags, `sym:` queries return nothing and
+    # result ranking degrades, so if you ever swap this image for a
+    # slimmer one, make sure the replacement still provides
+    # `universal-ctags` on $PATH. The integration tests under
+    # tests/test_integration.py assert this end-to-end via `sym:`
+    # queries and the per-repo `HasSymbols` flag.
     image: sourcegraph/zoekt-indexserver:latest
     container_name: zoekt-mcp-indexer
     restart: "no"

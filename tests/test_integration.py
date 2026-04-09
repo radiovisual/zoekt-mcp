@@ -108,3 +108,86 @@ async def test_get_file_returns_flask_source(client: ZoektClient) -> None:
 
     assert "def hello" in content
     assert "USERS" in content
+
+
+# ---------------------------------------------------------------------
+# ctags / symbol-search checks.
+#
+# Zoekt invokes universal-ctags at index time to extract symbol
+# definitions (functions, classes, constants, ...). The `sym:` query
+# atom *only* matches those ctags-extracted definitions, so a passing
+# `sym:` query is end-to-end proof that ctags was present and working
+# when the shards were built. These tests exist to catch the silent
+# regression where the upstream indexer image stops shipping ctags, or
+# someone swaps in a slimmer image without it — at that point indexing
+# still succeeds, content search still works, but ranking and symbol
+# navigation quietly degrade.
+#
+# See deploy/README.md ("Symbol search & ctags") for a walkthrough.
+# ---------------------------------------------------------------------
+
+
+async def test_index_has_symbols_flag(client: ZoektClient) -> None:
+    """Every example repo should report HasSymbols=true after indexing.
+
+    Zoekt sets this flag on the repo metadata when ctags produced at
+    least one symbol for the repo. If it's false, ctags either wasn't
+    on $PATH in the indexer image or failed at runtime.
+    """
+    result = await client.list_repos("repo:.")
+    repos = result.get("Repos") or result.get("repos") or result.get("List") or []
+
+    seen: dict[str, bool] = {}
+    for entry in repos:
+        repo = entry.get("Repository") or entry.get("repository") or entry
+        name = repo.get("Name") or repo.get("name") or ""
+        has_symbols = repo.get("HasSymbols")
+        if has_symbols is None:
+            has_symbols = repo.get("hasSymbols")
+        if name:
+            seen[name] = bool(has_symbols)
+
+    for required in ("flask-app", "express-app"):
+        matches = [n for n in seen if required in n]
+        assert matches, f"{required} missing from repos: {list(seen)}"
+        for name in matches:
+            assert seen[name], (
+                f"repo {name!r} was indexed without symbol data — "
+                "universal-ctags is probably missing from the indexer image. "
+                "See deploy/README.md 'Symbol search & ctags'."
+            )
+
+
+async def test_sym_search_finds_python_function(client: ZoektClient) -> None:
+    """`sym:hello` must resolve to the Python `def hello():` in flask-app.
+
+    A plain content search for "hello" would also hit docstrings,
+    comments, and string literals — `sym:` narrows to ctags definitions
+    only, so this assertion fails if ctags wasn't run at index time.
+    """
+    result = await client.search("sym:hello lang:python")
+    files = _all_file_names(result)
+
+    assert any("app.py" in f for f in files), (
+        f"sym:hello should resolve to flask-app/app.py via ctags; "
+        f"got: {files}. If this is empty, ctags probably didn't run."
+    )
+
+
+async def test_sym_search_cross_language_constant(client: ZoektClient) -> None:
+    """`sym:USERS` must find the constant in both Python and JavaScript.
+
+    The examples corpus is deliberately shaped so that `USERS` is
+    defined as a module-level constant in both flask-app/app.py and
+    express-app/index.js. ctags extracts both, and `sym:USERS` should
+    return matches in both files.
+    """
+    result = await client.search("sym:USERS")
+    files = _all_file_names(result)
+
+    assert any("app.py" in f for f in files), (
+        f"sym:USERS should find flask-app/app.py; got: {files}"
+    )
+    assert any("index.js" in f for f in files), (
+        f"sym:USERS should find express-app/index.js; got: {files}"
+    )
