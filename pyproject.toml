@@ -1,6 +1,6 @@
 [project]
 name = "zoekt-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server that exposes Sourcegraph Zoekt code search to AI agents"
 readme = "README.md"
 license = { file = "LICENSE" }
