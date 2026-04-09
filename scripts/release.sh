@@ -131,31 +131,46 @@ fi
 # Read the current version via tomllib so we get the same answer the
 # release workflow's verify-version step will read.
 CURRENT_VERSION="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-say "pyproject.toml is at ${CURRENT_VERSION}, bumping to ${VERSION}"
 
+# Decide whether we need to bump. The tag-already-exists check above
+# has already fired, so if CURRENT_VERSION matches VERSION we are in
+# the "tag the current pyproject version as-is" path — which is
+# exactly what the very first release (or any release from a commit
+# that already bumped pyproject.toml in an earlier PR) looks like.
+# Skip the bump + commit in that case and go straight to tag + push.
 if [ "${CURRENT_VERSION}" = "${VERSION}" ]; then
-  die "pyproject.toml is already at ${VERSION}; nothing to bump"
+  SKIP_BUMP=true
+  say "pyproject.toml is already at ${VERSION}; skipping bump + commit, tagging HEAD as-is"
+else
+  SKIP_BUMP=false
+  say "pyproject.toml is at ${CURRENT_VERSION}, bumping to ${VERSION}"
 fi
 
 # ---------------------------------------------------------------------
 # 2–5. Bump, commit, tag, push
 # ---------------------------------------------------------------------
 
-command -v uv >/dev/null 2>&1 \
-  || die "uv is required (install from https://docs.astral.sh/uv/)"
+if ! ${SKIP_BUMP}; then
+  command -v uv >/dev/null 2>&1 \
+    || die "uv is required to bump pyproject.toml (install from https://docs.astral.sh/uv/)"
 
-say "Bumping pyproject.toml version"
-run "uv version '${VERSION}'"
+  say "Bumping pyproject.toml version"
+  run "uv version '${VERSION}'"
 
-say "Committing the bump"
-run "git add pyproject.toml uv.lock 2>/dev/null || git add pyproject.toml"
-run "git commit -m 'chore(release): ${TAG}'"
+  say "Committing the bump"
+  run "git add pyproject.toml uv.lock 2>/dev/null || git add pyproject.toml"
+  run "git commit -m 'chore(release): ${TAG}'"
+fi
 
 say "Creating annotated tag ${TAG}"
 run "git tag -a '${TAG}' -m 'Release ${TAG}'"
 
 say "Pushing main and tag to origin"
-run "git push origin main"
+if ${SKIP_BUMP}; then
+  say "(main is already up to date on origin — pushing tag only)"
+else
+  run "git push origin main"
+fi
 run "git push origin '${TAG}'"
 
 if ${DRY_RUN}; then
