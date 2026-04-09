@@ -3,6 +3,7 @@
 [![CI](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/zoekt-mcp.svg)](https://pypi.org/project/zoekt-mcp/)
 [![ghcr.io](https://img.shields.io/badge/ghcr.io-zoekt--mcp-blue)](https://github.com/radiovisual/zoekt-mcp/pkgs/container/zoekt-mcp)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io/v0.1/servers?search=zoekt-mcp)
 [![License](https://img.shields.io/github/license/radiovisual/zoekt-mcp.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that exposes
@@ -14,8 +15,10 @@ over your repositories regardless of the language you're working in.
 - **MCP server:** Python, built on
   [FastMCP](https://github.com/modelcontextprotocol/python-sdk), runs over
   stdio so clients can spawn it as a subprocess. Published to
-  [PyPI](https://pypi.org/project/zoekt-mcp/) and
-  [ghcr.io](https://github.com/radiovisual/zoekt-mcp/pkgs/container/zoekt-mcp)
+  [PyPI](https://pypi.org/project/zoekt-mcp/),
+  [ghcr.io](https://github.com/radiovisual/zoekt-mcp/pkgs/container/zoekt-mcp),
+  and listed in the
+  [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=zoekt-mcp),
   so **no clone is required to use it**.
 - **Backend:** a `zoekt-webserver` you run yourself via the Docker
   Compose file attached to every
