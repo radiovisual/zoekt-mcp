@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff + pymarkdown)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dev dependencies
+        run: uv sync --dev
+
+      # The pre-commit config runs the exact same commands against
+      # staged files locally. Running it here over all files keeps
+      # local and CI behavior in lockstep.
+      - name: ruff check
+        run: uv run ruff check
+
+      - name: ruff format --check
+        run: uv run ruff format --check
+
+      - name: pymarkdown scan
+        run: >
+          uv run pymarkdown scan
+          README.md
+          deploy/README.md
+          examples/express-app/README.md
+          examples/flask-app/README.md
+
+  test:
+    name: Unit tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dev dependencies
+        run: uv sync --dev
+
+      # Integration tests need a running zoekt-webserver and are skipped
+      # automatically when ZOEKT_URL is unreachable, but we scope CI to
+      # the offline suites to keep the workflow hermetic.
+      - name: pytest (unit)
+        run: uv run pytest tests/test_client_unit.py tests/test_server_shaping.py -v

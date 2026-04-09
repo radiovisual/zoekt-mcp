@@ -32,7 +32,9 @@ class ZoektBackendError(RuntimeError):
     can surface a useful message to the agent rather than a bare stack trace.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None, body: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, body: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body

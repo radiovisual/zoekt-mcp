@@ -91,9 +91,7 @@ async def test_search_finds_python_hello(client: ZoektClient) -> None:
     result = await client.search("lang:python def hello")
     files = _all_file_names(result)
 
-    assert any("app.py" in f for f in files), (
-        f"expected a match in flask-app/app.py, got: {files}"
-    )
+    assert any("app.py" in f for f in files), f"expected a match in flask-app/app.py, got: {files}"
 
 
 async def test_search_finds_javascript_users(client: ZoektClient) -> None:

@@ -527,28 +527,46 @@ uv add --dev <package>           # add a new dev dep
 uv lock --upgrade                # refresh uv.lock
 ```
 
-### Linting
+### Commit routine
 
-Markdown is linted with
-[pymarkdownlnt](https://github.com/jackdewinter/pymarkdown), configured
-under `[tool.pymarkdown]` in [`pyproject.toml`](pyproject.toml). Run
-the linter against every project-owned markdown file with:
-
-```bash
-uv run pymarkdown scan README.md deploy/README.md examples/*/README.md
-```
-
-The linting step must pass before committing documentation changes.
-To check a single file while iterating:
+Linting is wired into the commit flow via a
+[pre-commit](https://pre-commit.com) hook so you never have to remember
+to run it by hand. After `uv sync`, install the hook once per clone:
 
 ```bash
-uv run pymarkdown scan README.md
+uv run pre-commit install
 ```
 
-Most default rules are enabled; we disable `MD013` (line length) and
-`MD046` (code block style) because they fight readable prose and
-tables full of long URLs. Tweak the configuration in `pyproject.toml`
-if you need to relax or re-enable other rules.
+From then on, every `git commit` runs:
+
+- **ruff** (`ruff check` + `ruff format --check`) against staged
+  Python files — config lives under `[tool.ruff]` in
+  [`pyproject.toml`](pyproject.toml).
+- **pymarkdownlnt** (`pymarkdown scan`) against staged Markdown files
+  — config lives under `[tool.pymarkdown]` in
+  [`pyproject.toml`](pyproject.toml). We disable `MD013` (line length)
+  and `MD046` (code block style) because they fight readable prose and
+  wide tables, and `MD033` so the troubleshooting `<details>` blocks
+  are allowed.
+
+The hooks shell out to `uv run`, so the tool versions pinned in
+`uv.lock` are what runs locally and in CI — no drift between
+environments. The same commands run on every push to `main` and every
+pull request via [`.github/workflows/ci.yml`](.github/workflows/ci.yml),
+which also runs the offline unit tests.
+
+To run everything manually (e.g. before opening a PR):
+
+```bash
+uv run pre-commit run --all-files
+```
+
+To fix Python formatting in place rather than just checking it:
+
+```bash
+uv run ruff format
+uv run ruff check --fix
+```
 
 ## Automated tests
 

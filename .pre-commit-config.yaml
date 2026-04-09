@@ -1,0 +1,38 @@
+# Pre-commit hooks for zoekt-mcp.
+#
+# Anyone cloning or forking the repo can enable these locally with one
+# command:
+#
+#     uv run pre-commit install
+#
+# After that, `git commit` runs ruff (lint + format check) against staged
+# Python files and pymarkdown against staged markdown files. The exact
+# same commands run in CI (.github/workflows/ci.yml) so what passes
+# locally passes there too.
+#
+# All hooks are `language: system` and invoke tools via `uv run`, which
+# guarantees the versions pinned in pyproject.toml / uv.lock are used.
+# That keeps local, pre-commit, and CI behavior identical.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: pymarkdown
+        name: pymarkdown scan
+        entry: uv run pymarkdown scan
+        language: system
+        types: [markdown]
+        require_serial: true

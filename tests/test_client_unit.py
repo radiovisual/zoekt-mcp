@@ -84,9 +84,7 @@ async def test_search_raises_on_5xx(client: ZoektClient) -> None:
 
 @respx.mock
 async def test_search_raises_on_invalid_json(client: ZoektClient) -> None:
-    respx.post(SEARCH_URL).mock(
-        return_value=httpx.Response(200, text="not json at all")
-    )
+    respx.post(SEARCH_URL).mock(return_value=httpx.Response(200, text="not json at all"))
 
     with pytest.raises(ZoektBackendError) as exc_info:
         await client.search("foo")

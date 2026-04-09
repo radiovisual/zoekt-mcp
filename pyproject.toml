@@ -26,10 +26,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=3.7",
     "pymarkdownlnt>=0.9.36",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -50,8 +52,21 @@ packages = ["src/zoekt_mcp"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
-# Markdown linting (pymarkdownlnt). Run via `uv run pymarkdown scan .`
-# or the helper alias in the Development setup section of README.md.
+# Python linting / formatting (ruff). Wired into the pre-commit hook
+# and the GitHub Actions CI workflow.
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# A pragmatic default set: pyflakes + pycodestyle + isort + pyupgrade +
+# bugbear. Keep it tight enough to catch real issues without fighting
+# the existing style.
+select = ["E", "F", "W", "I", "UP", "B"]
+
+# Markdown linting (pymarkdownlnt). Wired into the pre-commit hook
+# and the GitHub Actions CI workflow.
 [tool.pymarkdown]
 # Line length is hostile to documentation with long URLs, code fences,
 # and wide tables. We wrap prose by hand; rule MD013 is off.

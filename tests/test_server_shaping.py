@@ -135,9 +135,7 @@ def test_shape_search_result_prefers_chunk_matches_with_symbols() -> None:
     assert match["line"] == 11
     assert match["start_line"] == 11
     assert "const USERS" in match["text"]
-    assert match["ranges"] == [
-        {"start_line": 11, "start_col": 7, "end_line": 11, "end_col": 12}
-    ]
+    assert match["ranges"] == [{"start_line": 11, "start_col": 7, "end_line": 11, "end_col": 12}]
     assert match["symbols"] == [{"name": "USERS", "kind": "variable", "parent": None}]
 
 
