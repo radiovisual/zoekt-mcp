@@ -46,6 +46,9 @@ package-lock.json
 deploy/.data/
 *.zoekt
 
+# Per-user compose env (holds a local absolute ZOEKT_REPOS_DIR)
+deploy/.env
+
 # User-populated zoekt search corpus (deploy/repos/ holds real clones
 # that each user drops in themselves; keep the directory but not the
 # contents).
