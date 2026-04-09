@@ -1,4 +1,4 @@
-# zoekt-mcp
+# zoekt-mcp [![CI](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/radiovisual/zoekt-mcp/actions/workflows/ci.yml)
 
 An [MCP](https://modelcontextprotocol.io) server that exposes
 [Sourcegraph Zoekt](https://github.com/sourcegraph/zoekt) code search to any
